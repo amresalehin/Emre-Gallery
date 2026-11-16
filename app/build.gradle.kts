@@ -4,12 +4,43 @@ plugins {
     id("com.chaquo.python")
 }
 
+// Isolate each GitHub Actions debug APK so it can be installed alongside other
+// workflow builds, even when each runner generates a different debug certificate.
+// Local debug builds and all release builds keep the repository's base app ID.
+val isGitHubActions = providers.environmentVariable("GITHUB_ACTIONS").orNull == "true"
+val ciRunId = providers.environmentVariable("GITHUB_RUN_ID").orNull
+val ciRunAttempt = providers.environmentVariable("GITHUB_RUN_ATTEMPT").orNull
+val ciRunIdentity = if (isGitHubActions) {
+    val runId = requireNotNull(ciRunId) {
+        "GITHUB_RUN_ID must be set for GitHub Actions debug builds"
+    }
+    val runAttempt = requireNotNull(ciRunAttempt) {
+        "GITHUB_RUN_ATTEMPT must be set for GitHub Actions debug builds"
+    }
+    require(runId.isNotEmpty() && runId.all { it in '0'..'9' }) {
+        "GITHUB_RUN_ID must contain only digits"
+    }
+    require(runAttempt.isNotEmpty() && runAttempt.all { it in '0'..'9' }) {
+        "GITHUB_RUN_ATTEMPT must contain only digits"
+    }
+    runId to runAttempt
+} else {
+    null
+}
+val debugApplicationIdSuffix = ciRunIdentity?.let { (runId, runAttempt) ->
+    ".ci${runId}a${runAttempt}"
+}.orEmpty()
+val debugApplicationLabel = ciRunIdentity?.let { (runId, runAttempt) ->
+    "Emre Gallery CI ${runId}/${runAttempt}"
+} ?: "@string/app_name"
+
 android {
     namespace = "com.amresalehin.emregallery"
     compileSdk = 35
 
     defaultConfig {
         applicationId = "com.aistudio.emregallery.xytkpq"
+        manifestPlaceholders["applicationLabel"] = "@string/app_name"
         minSdk = 26
         targetSdk = 35
         versionCode = 1
@@ -21,8 +52,9 @@ android {
     }
 
     buildTypes {
-        debug {
-            // Debug build configuration
+        getByName("debug") {
+            applicationIdSuffix = debugApplicationIdSuffix
+            manifestPlaceholders["applicationLabel"] = debugApplicationLabel
         }
         release {
             isMinifyEnabled = true
