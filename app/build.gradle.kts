@@ -4,43 +4,33 @@ plugins {
     id("com.chaquo.python")
 }
 
-// Isolate each GitHub Actions debug APK so it can be installed alongside other
-// workflow builds, even when each runner generates a different debug certificate.
-// Local debug builds and all release builds keep the repository's base app ID.
+// Give each GitHub Actions debug build a compact, human-readable identity.
+// Local debug builds and release builds retain the original application ID.
 val isGitHubActions = providers.environmentVariable("GITHUB_ACTIONS").orNull == "true"
-val ciRunId = providers.environmentVariable("GITHUB_RUN_ID").orNull
-val ciRunAttempt = providers.environmentVariable("GITHUB_RUN_ATTEMPT").orNull
-val ciRunIdentity = if (isGitHubActions) {
-    val runId = requireNotNull(ciRunId) {
-        "GITHUB_RUN_ID must be set for GitHub Actions debug builds"
+val ciRunNumber = providers.environmentVariable("GITHUB_RUN_NUMBER").orNull
+val debugCiNumber = if (isGitHubActions) {
+    val runNumber = requireNotNull(ciRunNumber) {
+        "GITHUB_RUN_NUMBER must be set for GitHub Actions debug builds"
     }
-    val runAttempt = requireNotNull(ciRunAttempt) {
-        "GITHUB_RUN_ATTEMPT must be set for GitHub Actions debug builds"
+    require(runNumber.isNotEmpty() && runNumber.all { it in '0'..'9' }) {
+        "GITHUB_RUN_NUMBER must contain only digits"
     }
-    require(runId.isNotEmpty() && runId.all { it in '0'..'9' }) {
-        "GITHUB_RUN_ID must contain only digits"
-    }
-    require(runAttempt.isNotEmpty() && runAttempt.all { it in '0'..'9' }) {
-        "GITHUB_RUN_ATTEMPT must contain only digits"
-    }
-    runId to runAttempt
+    runNumber
 } else {
     null
 }
-val debugApplicationIdSuffix = ciRunIdentity?.let { (runId, runAttempt) ->
-    ".ci${runId}a${runAttempt}"
-}.orEmpty()
-val debugApplicationLabel = ciRunIdentity?.let { (runId, runAttempt) ->
-    "Emre Gallery CI ${runId}/${runAttempt}"
-} ?: "@string/app_name"
+val debugApplicationId = debugCiNumber?.let { "com.emregallery.ci$it" }
+    ?: "com.aistudio.emregallery.xytkpq"
+val debugApplicationLabel = debugCiNumber?.let { "Emre CI $it" }
+    ?: "@string/app_name"
 
 android {
     namespace = "com.amresalehin.emregallery"
     compileSdk = 35
 
     defaultConfig {
-        applicationId = "com.aistudio.emregallery.xytkpq"
-        manifestPlaceholders["applicationLabel"] = "@string/app_name"
+        applicationId = debugApplicationId
+        manifestPlaceholders["applicationLabel"] = debugApplicationLabel
         minSdk = 26
         targetSdk = 35
         versionCode = 1
@@ -52,10 +42,6 @@ android {
     }
 
     buildTypes {
-        getByName("debug") {
-            applicationIdSuffix = debugApplicationIdSuffix
-            manifestPlaceholders["applicationLabel"] = debugApplicationLabel
-        }
         release {
             isMinifyEnabled = true
             isShrinkResources = true

@@ -71,7 +71,7 @@ jobs:
           test -x "$BUILD_TOOLS_DIR/aapt"
           test -x "$BUILD_TOOLS_DIR/apksigner"
 
-          EXPECTED_APPLICATION_ID="com.aistudio.emregallery.xytkpq.ci${GITHUB_RUN_ID}a${GITHUB_RUN_ATTEMPT}"
+          EXPECTED_APPLICATION_ID="com.emregallery.ci${GITHUB_RUN_NUMBER}"
           ACTUAL_APPLICATION_ID="$("$BUILD_TOOLS_DIR/aapt" dump badging "$APK" | awk -F"'" '/^package: name=/ { print $2; exit }')"
           echo "Expected application ID: $EXPECTED_APPLICATION_ID"
           echo "Actual application ID:   $ACTUAL_APPLICATION_ID"
@@ -83,7 +83,7 @@ jobs:
       - name: Upload debug APK
         uses: actions/upload-artifact@v4
         with:
-          name: emre-gallery-debug-${{ github.sha }}-run-${{ github.run_id }}-attempt-${{ github.run_attempt }}
+          name: Emre-CI-${{ github.run_number }}-${{ github.sha }}
           path: app/build/outputs/apk/debug/*.apk
           if-no-files-found: error
           retention-days: 14
