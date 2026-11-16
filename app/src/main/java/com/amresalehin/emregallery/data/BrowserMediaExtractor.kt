@@ -25,7 +25,7 @@ class BrowserMediaExtractor(private val context: Context) {
         targetUrl: String,
         onStatusUpdate: (String) -> Unit,
         onMediaDiscovered: (ScrapedMediaItem) -> Unit,
-        onFinished: () -> Unit
+        onFinished: (String?) -> Unit
     ) {
         mainHandler.post {
             cleanup()
@@ -41,9 +41,10 @@ class BrowserMediaExtractor(private val context: Context) {
                 BrowserCookieSync.syncJarToWebView(wv, normalizedUrl)
 
                 val isExtractionCompleted = AtomicBoolean(false)
+                var lastMainFrameError: String? = null
                 fun safeComplete() {
                     if (isExtractionCompleted.compareAndSet(false, true)) {
-                        onFinished()
+                        onFinished(lastMainFrameError)
                     }
                 }
 
@@ -82,6 +83,7 @@ class BrowserMediaExtractor(private val context: Context) {
                     adaptiveScroller = adaptiveScroller,
                     isCancelled = { isCancelled },
                     onStatusUpdate = onStatusUpdate,
+                    onMainFrameError = { err -> lastMainFrameError = err },
                     onComplete = ::safeComplete
                 )
 
@@ -97,8 +99,9 @@ class BrowserMediaExtractor(private val context: Context) {
                 wv.loadUrl(normalizedUrl)
             } catch (e: Exception) {
                 Log.e(TAG, "Browser initialization failed", e)
-                onStatusUpdate("Browser initialization failed: ${e.localizedMessage}")
-                onFinished()
+                val msg = "Browser initialization failed: ${e.localizedMessage ?: e.javaClass.simpleName}"
+                onStatusUpdate(msg)
+                onFinished(msg)
             }
         }
     }

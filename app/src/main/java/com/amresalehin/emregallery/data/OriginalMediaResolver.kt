@@ -109,11 +109,14 @@ object OriginalMediaResolver {
     }
 
     private fun resolveReddit(normalized: String): ResolvedMediaInfo? {
-        if (!normalized.contains("preview.redd.it") && !normalized.contains("external-preview.redd.it")) {
+        if (normalized.contains("://external-preview.redd.it", ignoreCase = true) ||
+            !normalized.contains("://preview.redd.it/", ignoreCase = true)
+        ) {
             return null
         }
         val cleanPath = normalized.substringBefore("?")
         val fileName = cleanPath.substringAfterLast('/')
+        if (fileName.isBlank()) return null
         val cleanTitle = runCatching { URLDecoder.decode(fileName, "UTF-8") }.getOrDefault(fileName)
         return ResolvedMediaInfo(
             mediaUrl = "https://i.redd.it/$fileName",
@@ -190,12 +193,19 @@ object OriginalMediaResolver {
     }
 
     private fun resolveGoogleUserContent(normalized: String): ResolvedMediaInfo? {
-        if (!normalized.contains("googleusercontent.com")) return null
-        val base = normalized.substringBefore("=")
+        if (!normalized.contains("googleusercontent.com", ignoreCase = true)) return null
+        val hashIdx = normalized.indexOf('#')
+        val noHash = if (hashIdx == -1) normalized else normalized.substring(0, hashIdx)
+        val qIdx = noHash.indexOf('?')
+        val pathPart = if (qIdx == -1) noHash else noHash.substring(0, qIdx)
+        val querySuffix = if (qIdx == -1) "" else noHash.substring(qIdx)
+        val lastSlash = pathPart.lastIndexOf('/')
+        val eqIdx = if (lastSlash != -1) pathPart.indexOf('=', startIndex = lastSlash + 1) else -1
+        val basePath = if (eqIdx != -1) pathPart.substring(0, eqIdx) else pathPart
         return ResolvedMediaInfo(
-            mediaUrl = "$base=s0",
+            mediaUrl = "$basePath=s0$querySuffix",
             thumbnailUrl = normalized,
-            cleanTitle = base.substringAfterLast('/')
+            cleanTitle = basePath.substringAfterLast('/').ifBlank { null }
         )
     }
 

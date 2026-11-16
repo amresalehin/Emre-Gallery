@@ -180,6 +180,27 @@ object GalleryDlEngine {
         }
     }
 
+    /**
+     * Checks whether yt-dlp has a dedicated extractor (non-generic) or stream manifest for the URL.
+     */
+    fun checkYtDlpSupport(url: String): Boolean {
+        if (url.isBlank()) return false
+        val lower = url.lowercase()
+        val cleanPath = lower.substringBefore('?').substringBefore('#')
+        if (cleanPath.endsWith(".m3u8") || cleanPath.endsWith(".mpd")) {
+            return true
+        }
+        if (!isAvailable()) return false
+        return try {
+            val py = Python.getInstance()
+            val runner = py.getModule("gallery_dl_runner")
+            runner.callAttr("check_ytdlp_support", url.trim()).toBoolean()
+        } catch (e: Exception) {
+            Log.w(TAG, "checkYtDlpSupport error: ${e.message}")
+            false
+        }
+    }
+
     private fun parseExtractedItems(root: JSONObject, pageUrl: String): Pair<String, List<ScrapedMediaItem>> {
         val pageTitle = root.optString("pageTitle", "")
         val itemsArray = root.optJSONArray("items") ?: JSONArray()
@@ -198,6 +219,44 @@ object GalleryDlEngine {
             val isVideo = obj.optBoolean("isVideo", false)
             val isAudio = obj.optBoolean("isAudio", false)
             val isStream = obj.optBoolean("isStream", false)
+            val sourceLabel = obj.optString("source", "gallery-dl").ifBlank { "gallery-dl" }
+            val webpageUrl = obj.optString("webpageUrl", "").ifBlank { pageUrl }
+
+            val headersMap = mutableMapOf(
+                "User-Agent" to OkHttpDownloader.DEFAULT_USER_AGENT,
+                "Referer" to webpageUrl
+            )
+            val jsonHeaders = obj.optJSONObject("httpHeaders")
+            if (jsonHeaders != null) {
+                val keys = jsonHeaders.keys()
+                while (keys.hasNext()) {
+                    val key = keys.next()
+                    val value = jsonHeaders.optString(key, "")
+                    if (value.isNotBlank()) {
+                        headersMap[key] = value
+                    }
+                }
+            }
+
+            val metadataMap = mutableMapOf("source_url" to pageUrl)
+            if (webpageUrl != pageUrl) {
+                metadataMap["webpage_url"] = webpageUrl
+            }
+            val formatsArr = obj.optJSONArray("formats")
+            if (formatsArr != null && formatsArr.length() > 0) {
+                metadataMap["formats_json"] = formatsArr.toString()
+                metadataMap["available_formats_count"] = formatsArr.length().toString()
+                val summary = (0 until minOf(formatsArr.length(), 6)).mapNotNull { idx ->
+                    val f = formatsArr.optJSONObject(idx) ?: return@mapNotNull null
+                    val h = f.optInt("height", 0)
+                    val ext = f.optString("ext", "")
+                    if (h > 0 && ext.isNotBlank()) "${h}p $ext"
+                    else ext.ifBlank { f.optString("format_id", "").ifBlank { null } }
+                }.distinct().joinToString(", ")
+                if (summary.isNotBlank()) {
+                    metadataMap["formats"] = summary
+                }
+            }
 
             val item = ScrapedMediaItem(
                 id = obj.optString("id", "gdl_${System.currentTimeMillis()}_$i"),
@@ -210,18 +269,15 @@ object GalleryDlEngine {
                 format = obj.optString("format", "IMAGE"),
                 mimeType = obj.optString("mimeType", if (isVideo) "video/mp4" else "image/jpeg"),
                 thumbnailUrl = obj.optString("thumbnailUrl").takeIf { !it.isNullOrBlank() },
-                source = obj.optString("source", "gallery-dl"),
+                source = sourceLabel,
                 resolutionHint = obj.optString("resolutionHint").takeIf { !it.isNullOrBlank() },
                 sizeBytes = if (obj.has("sizeBytes") && !obj.isNull("sizeBytes")) obj.getLong("sizeBytes") else null,
                 provenance = MediaProvenance(
-                    extractorEngine = "gallery-dl / yt-dlp",
-                    pageUrl = pageUrl
+                    extractorEngine = sourceLabel,
+                    pageUrl = webpageUrl
                 ),
-                metadata = mapOf("source_url" to pageUrl),
-                downloadHeaders = mapOf(
-                    "User-Agent" to OkHttpDownloader.DEFAULT_USER_AGENT,
-                    "Referer" to pageUrl
-                )
+                metadata = metadataMap,
+                downloadHeaders = headersMap
             )
             itemsList.add(item)
         }

@@ -191,7 +191,8 @@ internal data class DownloaderResultsObservedData(
     val domain: String,
     val allScrapedItems: List<ScrapedMediaItem>,
     val finishedIds: Set<String>,
-    val finishedMediaUrls: Set<String>
+    val finishedMediaUrls: Set<String>,
+    val errorMessage: String? = null
 )
 
 @Composable
@@ -281,7 +282,8 @@ internal fun rememberDownloaderResultsController(targetUrl: String): Pair<Downlo
         domain = extractorState.domain,
         allScrapedItems = allScrapedItems,
         finishedIds = finishedIds,
-        finishedMediaUrls = finishedMediaUrls
+        finishedMediaUrls = finishedMediaUrls,
+        errorMessage = extractorState.errorMessage
     )
 
     return controller to observed

@@ -114,6 +114,7 @@ fun DownloaderResultsPage(
             DownloaderResultsBody(
                 filteredItems = filteredItems,
                 isExtracting = observed.isExtracting,
+                errorMessage = observed.errorMessage,
                 selectedItemIds = controller.selectedItemIds,
                 finishedIds = observed.finishedIds,
                 finishedMediaUrls = observed.finishedMediaUrls,

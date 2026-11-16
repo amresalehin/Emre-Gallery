@@ -41,19 +41,9 @@ POPULAR_EXTRACTORS = [
     {"name": "Flickr", "domains": ["flickr.com"], "icon": "camera"},
 ]
 
-YTDLP_VIDEO_HOSTS = [
-    "youtube.com",
-    "youtu.be",
-    "vimeo.com",
-    "tiktok.com",
-    "dailymotion.com",
-    "twitch.tv",
-    "soundcloud.com",
-    "bandcamp.com",
-    "facebook.com",
-    "instagram.com/reel",
-]
-
+import os
+import tempfile
+from urllib.parse import urlparse
 
 def parse_options(options_json):
     """Safely parses JSON extractor options."""
@@ -64,6 +54,76 @@ def parse_options(options_json):
         return parsed if isinstance(parsed, dict) else {}
     except Exception:
         return {}
+
+
+def create_netscape_cookie_file(cookies_str, url):
+    """
+    Converts a raw HTTP Cookie header string ('k1=v1; k2=v2') into a temporary
+    Netscape cookies.txt file usable by both yt-dlp and gallery-dl.
+    Returns the temp file path or None if no valid cookie pairs exist.
+    """
+    if not cookies_str or not isinstance(cookies_str, str):
+        return None
+    trimmed = cookies_str.strip()
+    if not trimmed:
+        return None
+
+    # If caller already passed a valid existing file path, reuse it directly (caller won't delete it).
+    if os.path.isfile(trimmed):
+        return None
+
+    parsed_url = urlparse(url or "")
+    host = (parsed_url.hostname or "").strip().lower()
+    if not host:
+        return None
+
+    is_https = parsed_url.scheme.lower() == "https"
+    secure_flag = "TRUE" if is_https else "FALSE"
+    # Use leading dot domain to match subdomains (e.g., .reddit.com, .x.com)
+    parts = host.split(".")
+    base_domain = f".{'.'.join(parts[-2:])}" if len(parts) >= 2 else host
+
+    lines = ["# Netscape HTTP Cookie File\n"]
+    pair_count = 0
+    for segment in trimmed.split(";"):
+        part = segment.strip()
+        if "=" not in part:
+            continue
+        name, value = part.split("=", 1)
+        name = name.strip()
+        value = value.strip()
+        if not name:
+            continue
+        # Write entry for exact host and apex domain
+        lines.append(f"{host}\tFALSE\t/\t{secure_flag}\t0\t{name}\t{value}\n")
+        if base_domain != host:
+            lines.append(f"{base_domain}\tTRUE\t/\t{secure_flag}\t0\t{name}\t{value}\n")
+        pair_count += 1
+
+    if pair_count == 0:
+        return None
+
+    fd, temp_path = tempfile.mkstemp(prefix="emre_cookies_", suffix=".txt")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.writelines(lines)
+        return temp_path
+    except Exception:
+        try:
+            os.remove(temp_path)
+        except Exception:
+            pass
+        return None
+
+
+def cleanup_temp_file(path):
+    """Safely removes a temporary file if it exists."""
+    if path:
+        try:
+            if os.path.exists(path):
+                os.remove(path)
+        except Exception:
+            pass
 
 
 def build_http_headers(user_agent=None, referer=None, cookies=None, headers_json=None):
@@ -104,6 +164,34 @@ def get_engine_status():
     })
 
 
+def check_ytdlp_support(url):
+    """Checks if a URL matches any non-generic yt-dlp extractor or direct stream manifest."""
+    if not url or not YTDLP_AVAILABLE:
+        return json.dumps({"supported": False, "extractor": ""})
+
+    clean_url = url.strip()
+    lower = clean_url.lower()
+    clean_path = lower.split("?")[0].split("#")[0]
+    if clean_path.endswith(".m3u8") or clean_path.endswith(".mpd"):
+        return json.dumps({"supported": True, "extractor": "StreamManifest"})
+
+    try:
+        from yt_dlp.extractor import gen_extractors
+        for ie in gen_extractors():
+            ie_name = getattr(ie, "IE_NAME", "") or ""
+            if ie_name.lower() == "generic":
+                continue
+            try:
+                if ie.suitable(clean_url):
+                    return json.dumps({"supported": True, "extractor": ie_name})
+            except Exception:
+                continue
+    except Exception:
+        pass
+
+    return json.dumps({"supported": False, "extractor": ""})
+
+
 def check_support(url):
     """Checks if a URL is handled by gallery-dl or yt-dlp extractors."""
     if not url:
@@ -130,13 +218,13 @@ def check_support(url):
 
     if YTDLP_AVAILABLE:
         try:
-            lower = clean_url.lower()
-            if any(vh in lower for vh in YTDLP_VIDEO_HOSTS):
+            yt_res = json.loads(check_ytdlp_support(clean_url))
+            if yt_res.get("supported"):
                 return json.dumps({
                     "supported": True,
                     "category": "video",
                     "subcategory": "stream",
-                    "extractor": "YoutubeDL",
+                    "extractor": yt_res.get("extractor") or "YoutubeDL",
                     "engine": "yt-dlp",
                 })
         except Exception:

@@ -21,7 +21,18 @@ import kotlinx.coroutines.sync.withLock
  * Coordinates [DirectMediaProvider], [GalleryDlProvider], [YtDlpProvider], [StaticHtmlProvider],
  * and [BrowserProvider] independently, progressively merging discovered items via [DiscoveredMediaMerger].
  */
-class DualMediaExtractor(private val context: Context) {
+class DualMediaExtractor(
+    private val context: Context,
+    private val directProviderFactory: () -> ExtractionProvider = { DirectMediaProvider() },
+    private val concurrentProvidersFactory: (Context) -> List<Pair<String, ExtractionProvider>> = { ctx ->
+        listOf(
+            "gallery-dl extraction" to GalleryDlProvider(),
+            "yt-dlp extraction" to YtDlpProvider(),
+            "StaticHtmlProvider" to StaticHtmlProvider(),
+            "Browser extraction" to BrowserProvider(ctx)
+        )
+    }
+) {
 
     private var extractionJob: Job? = null
     private var activeBrowserProvider: BrowserProvider? = null
@@ -55,11 +66,15 @@ class DualMediaExtractor(private val context: Context) {
 
         val trimmed = targetUrl.trim()
         if (!WebUrlUtils.isValidWebUrl(trimmed)) {
+            val invalidMsg = "Please enter a valid URL (e.g. https://example.com)"
             _state.value = ExtractionState(
-                errorMessage = "Please enter a valid URL (e.g. https://example.com)",
+                errorMessage = invalidMsg,
+                phase = ExtractionPhase.ERROR,
+                statusMessage = invalidMsg,
                 isRunning = false,
                 items = emptyList()
             )
+            DownloaderSession.finishSession(message = invalidMsg, error = invalidMsg)
             return
         }
 
@@ -71,12 +86,23 @@ class DualMediaExtractor(private val context: Context) {
             statusMessage = "Starting extraction engine...",
             phase = ExtractionPhase.DIRECT_MEDIA,
             domain = domain,
-            items = emptyList()
+            items = emptyList(),
+            errorMessage = null
         )
 
         extractionJob = scope.launch {
             val itemsMap = LinkedHashMap<String, ScrapedMediaItem>()
+            val providerErrors = mutableListOf<String>()
             val itemsMutex = Mutex()
+
+            suspend fun recordProviderError(rawError: String?) {
+                val cleaned = rawError?.trim()?.takeIf { it.isNotBlank() } ?: return
+                itemsMutex.withLock {
+                    if (cleaned !in providerErrors) {
+                        providerErrors.add(cleaned)
+                    }
+                }
+            }
 
             suspend fun updateItems(
                 newList: List<ScrapedMediaItem>,
@@ -111,14 +137,23 @@ class DualMediaExtractor(private val context: Context) {
             }
 
             try {
-                val directProvider = DirectMediaProvider()
+                val directProvider = directProviderFactory()
                 if (directProvider.isApplicable(requestContext)) {
                     updateStatus("Identified direct media link...", ExtractionPhase.DIRECT_MEDIA)
-                    val directRes = coroutineScope {
-                        directProvider.extract(
-                            context = requestContext,
-                            onItemDiscovered = { item -> launch { updateItems(listOf(item)) } },
-                            onStatusUpdate = {}
+                    val directRes = try {
+                        coroutineScope {
+                            directProvider.extract(
+                                context = requestContext,
+                                onItemDiscovered = { item -> launch { updateItems(listOf(item)) } },
+                                onStatusUpdate = {}
+                            )
+                        }
+                    } catch (ce: CancellationException) {
+                        throw ce
+                    } catch (e: Exception) {
+                        Log.w("DualMediaExtractor", "DirectMediaProvider error", e)
+                        MediaExtractionResult(
+                            errorMessage = e.localizedMessage ?: "Direct media extraction failed"
                         )
                     }
                     if (directRes.items.isNotEmpty()) {
@@ -127,93 +162,113 @@ class DualMediaExtractor(private val context: Context) {
                             title = directRes.pageTitle ?: domain,
                             msg = "Discovered direct media file"
                         )
+                    } else {
+                        recordProviderError(directRes.errorMessage)
                     }
                 }
 
                 if (directOnly) {
                     itemsMutex.withLock {
+                        val directErr = if (itemsMap.isEmpty()) selectPrimaryError(providerErrors) else null
+                        val finalMsg = when {
+                            itemsMap.isNotEmpty() -> "Discovered direct media file"
+                            directErr != null -> directErr
+                            else -> "No direct media found"
+                        }
                         _state.value = _state.value.copy(
                             isRunning = false,
-                            phase = ExtractionPhase.COMPLETED,
-                            statusMessage = if (itemsMap.isNotEmpty()) "Discovered direct media file" else "No direct media found"
+                            phase = if (directErr != null) ExtractionPhase.ERROR else ExtractionPhase.COMPLETED,
+                            statusMessage = finalMsg,
+                            errorMessage = directErr
                         )
+                        DownloaderSession.finishSession(message = finalMsg, error = directErr)
                     }
                     return@launch
                 }
 
                 updateStatus("Searching media with concurrent engines...", ExtractionPhase.BROWSER_INTERCEPTING)
 
-                val galleryDlProvider = GalleryDlProvider()
-                val ytDlpProvider = YtDlpProvider()
-                val staticHtmlProvider = StaticHtmlProvider()
-                val browserProvider = BrowserProvider(context)
+                val providers = concurrentProvidersFactory(context)
+                val browserProvider = providers.map { it.second }.filterIsInstance<BrowserProvider>().firstOrNull()
                 activeBrowserProvider = browserProvider
 
                 try {
                     coroutineScope {
-                        val gdlDeferred = launchIoProviderAsync(
-                            provider = galleryDlProvider,
-                            requestContext = requestContext,
-                            tag = "gallery-dl extraction",
-                            onItem = { updateItems(listOf(it)) },
-                            onStatus = { updateStatus(it) }
-                        )
-                        val ytdlpDeferred = launchIoProviderAsync(
-                            provider = ytDlpProvider,
-                            requestContext = requestContext,
-                            tag = "yt-dlp extraction",
-                            onItem = { updateItems(listOf(it)) },
-                            onStatus = { updateStatus(it) }
-                        )
-                        val staticDeferred = launchIoProviderAsync(
-                            provider = staticHtmlProvider,
-                            requestContext = requestContext,
-                            tag = "StaticHtmlProvider",
-                            checkApplicable = false,
-                            onItem = { updateItems(listOf(it)) },
-                            onStatus = { updateStatus(it) }
-                        )
-                        val browserDeferred = async {
-                            try {
-                                browserProvider.extract(
-                                    context = requestContext,
-                                    onItemDiscovered = { item -> launch { updateItems(listOf(item)) } },
-                                    onStatusUpdate = { status ->
-                                        val phase = if (status.contains("scrolling", ignoreCase = true)) {
-                                            ExtractionPhase.AUTO_SCROLLING
-                                        } else {
-                                            ExtractionPhase.BROWSER_INTERCEPTING
-                                        }
-                                        launch { updateStatus(status, phase) }
+                        val deferreds = providers.map { (tag, provider) ->
+                            val isStatic = provider is StaticHtmlProvider
+                            val isBrowser = provider is BrowserProvider
+                            if (isBrowser) {
+                                async {
+                                    try {
+                                        provider.extract(
+                                            context = requestContext,
+                                            onItemDiscovered = { item -> launch { updateItems(listOf(item)) } },
+                                            onStatusUpdate = { status ->
+                                                val phase = if (status.contains("scrolling", ignoreCase = true)) {
+                                                    ExtractionPhase.AUTO_SCROLLING
+                                                } else {
+                                                    ExtractionPhase.BROWSER_INTERCEPTING
+                                                }
+                                                launch { updateStatus(status, phase) }
+                                            }
+                                        )
+                                    } catch (ce: CancellationException) {
+                                        throw ce
+                                    } catch (e: Exception) {
+                                        Log.w("DualMediaExtractor", "$tag error", e)
+                                        MediaExtractionResult(
+                                            errorMessage = e.localizedMessage ?: "$tag failed"
+                                        )
                                     }
+                                }
+                            } else {
+                                launchIoProviderAsync(
+                                    provider = provider,
+                                    requestContext = requestContext,
+                                    tag = tag,
+                                    checkApplicable = !isStatic,
+                                    onItem = { updateItems(listOf(it)) },
+                                    onStatus = { updateStatus(it) }
                                 )
-                            } catch (ce: CancellationException) {
-                                throw ce
-                            } catch (e: Exception) {
-                                Log.w("DualMediaExtractor", "Browser extraction error", e)
-                                null
                             }
                         }
 
-                        listOf(gdlDeferred, ytdlpDeferred, staticDeferred, browserDeferred).forEach { deferred ->
+                        deferreds.forEach { deferred ->
                             val result = deferred.await()
-                            if (result != null && result.items.isNotEmpty()) {
-                                updateItems(result.items, title = result.pageTitle)
+                            if (result != null) {
+                                if (result.items.isNotEmpty()) {
+                                    updateItems(result.items, title = result.pageTitle)
+                                } else {
+                                    recordProviderError(result.errorMessage)
+                                }
                             }
                         }
                     }
                 } finally {
-                    browserProvider.cleanup()
+                    browserProvider?.cleanup()
                     activeBrowserProvider = null
                 }
 
                 itemsMutex.withLock {
                     val finalCount = itemsMap.size
+                    val primaryError = if (finalCount == 0) selectPrimaryError(providerErrors) else null
+                    val finalPhase = if (finalCount == 0 && primaryError != null) {
+                        ExtractionPhase.ERROR
+                    } else {
+                        ExtractionPhase.COMPLETED
+                    }
+                    val finalStatus = when {
+                        finalCount > 0 -> "Extraction completed. Discovered $finalCount media items."
+                        primaryError != null -> primaryError
+                        else -> "No media discovered on this page."
+                    }
                     _state.value = _state.value.copy(
                         isRunning = false,
-                        phase = ExtractionPhase.COMPLETED,
-                        statusMessage = if (finalCount > 0) "Extraction completed. Discovered $finalCount media items." else "No media discovered on this page."
+                        phase = finalPhase,
+                        statusMessage = finalStatus,
+                        errorMessage = primaryError
                     )
+                    DownloaderSession.finishSession(message = finalStatus, error = primaryError)
                 }
             } catch (ce: CancellationException) {
                 _state.value = _state.value.copy(
@@ -223,14 +278,30 @@ class DualMediaExtractor(private val context: Context) {
                 )
             } catch (e: Exception) {
                 Log.e("DualMediaExtractor", "Orchestration error", e)
+                val errMsg = e.localizedMessage ?: e.javaClass.simpleName
                 _state.value = _state.value.copy(
                     isRunning = false,
                     phase = ExtractionPhase.ERROR,
-                    statusMessage = "Extraction failed: ${e.localizedMessage}",
-                    errorMessage = e.localizedMessage
+                    statusMessage = "Extraction failed: $errMsg",
+                    errorMessage = errMsg
                 )
+                DownloaderSession.finishSession(message = "Extraction failed: $errMsg", error = errMsg)
             }
         }
+    }
+
+    private fun selectPrimaryError(errors: List<String>): String? {
+        if (errors.isEmpty()) return null
+        val meaningful = errors.filterNot {
+            it.contains("not available or empty", ignoreCase = true) ||
+                it.contains("Chaquopy Python runtime is not active", ignoreCase = true)
+        }
+        val pool = meaningful.ifEmpty { errors }
+        val priorityKeywords = listOf("403", "401", "429", "login", "sign in", "forbidden", "captcha", "cloudflare", "blocked", "http")
+        val prioritized = pool.firstOrNull { err ->
+            priorityKeywords.any { kw -> err.contains(kw, ignoreCase = true) }
+        }
+        return prioritized ?: pool.first()
     }
 
     private fun CoroutineScope.launchIoProviderAsync(
@@ -255,7 +326,9 @@ class DualMediaExtractor(private val context: Context) {
             throw ce
         } catch (e: Exception) {
             Log.w("DualMediaExtractor", "$tag error", e)
-            null
+            MediaExtractionResult(
+                errorMessage = e.localizedMessage ?: "$tag failed"
+            )
         }
     }
 

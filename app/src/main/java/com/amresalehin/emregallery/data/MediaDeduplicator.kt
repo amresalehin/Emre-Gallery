@@ -18,15 +18,19 @@ object MediaDeduplicator {
     )
 
     private val SIZING_PARAMS = setOf(
-        "w", "width", "h", "height", "size", "s", "quality", "q",
-        "fit", "crop", "auto", "format", "fmt", "fm", "f", "dpr", "lossless", "strip",
+        "w", "width", "h", "height", "size", "quality", "q",
+        "fit", "crop", "auto", "format", "fmt", "fm", "dpr", "lossless", "strip",
         "scale", "resize", "maxwidth", "maxheight",
         "sqp", "rs", "sigh", "sig", "sparams",
         "itag", "range", "ratebypass", "rn", "rbuf", "mime", "gir", "clen", "dur", "lmt"
     )
 
+    private val CONDITIONAL_S_VALUE_REGEX =
+        Regex("""^(?:\d+x\d+|small|medium|large|thumb|orig|original)$""", RegexOption.IGNORE_CASE)
+    private val CONDITIONAL_F_VALUE_REGEX =
+        Regex("""^(?:auto|jpe?g|png|webp|avif|gif|heic)$""", RegexOption.IGNORE_CASE)
+
     private val REDDIT_PREVIEW_REGEX = Regex("""https?://preview\.redd\.it/""")
-    private val REDDIT_EXT_PREVIEW_REGEX = Regex("""https?://external-preview\.redd\.it/""")
     private val WP_PHOTON_REGEX = Regex("""https?://i[0-3]\.wp\.com/""")
     private val PINTEREST_HASH_REGEX = Regex("""([0-9a-fA-F]{32})""")
     private val YOUTUBE_THUMB_REGEX = Regex("""(?:ytimg\.com|youtube\.com)/(?:vi|vi_webp)/([a-zA-Z0-9_-]{11})/""")
@@ -41,7 +45,7 @@ object MediaDeduplicator {
         """(?:\.(?:144|240|360|480|720|1080|1440|2160)p(?:\.vp9|\.av1)?|[._-](?:144|240|360|480|720|1080|1440|2160)p)\.(webm|mp4|mkv)$""",
         RegexOption.IGNORE_CASE
     )
-    private val RASTER_EXT_REGEX = Regex("""\.(?:jpe?g|webp|png|avif)$""", RegexOption.IGNORE_CASE)
+    private val LOSSY_RASTER_EXT_REGEX = Regex("""\.(?:jpe?g|webp|avif)$""", RegexOption.IGNORE_CASE)
 
     /**
      * Creates a canonical deduplication key by removing non-functional tracking query parameters.
@@ -82,7 +86,6 @@ object MediaDeduplicator {
             var normalizedHostAndPath = normalizedPath
                 .replace("thumb.wikimedia.org", "upload.wikimedia.org")
                 .replace(REDDIT_PREVIEW_REGEX, "https://i.redd.it/")
-                .replace(REDDIT_EXT_PREVIEW_REGEX, "https://i.redd.it/")
                 .replace(WP_PHOTON_REGEX, "https://i.wp.com/")
 
             if (normalizedHostAndPath.contains("pinimg.com")) {
@@ -96,7 +99,11 @@ object MediaDeduplicator {
             }
 
             if (normalizedHostAndPath.contains("googleusercontent.com")) {
-                normalizedHostAndPath = normalizedHostAndPath.substringBefore("=")
+                val lastSlash = normalizedHostAndPath.lastIndexOf('/')
+                val eqIdx = if (lastSlash != -1) normalizedHostAndPath.indexOf('=', startIndex = lastSlash + 1) else -1
+                if (eqIdx != -1) {
+                    normalizedHostAndPath = normalizedHostAndPath.substring(0, eqIdx)
+                }
             }
 
             if (normalizedHostAndPath.contains("i.imgur.com/")) {
@@ -122,8 +129,8 @@ object MediaDeduplicator {
                 "." + match.groupValues[1]
             }
 
-            val normalizedFormatPath = if (RASTER_EXT_REGEX.containsMatchIn(normalizedVideoPath)) {
-                normalizedVideoPath.replace(RASTER_EXT_REGEX, ".img")
+            val normalizedFormatPath = if (LOSSY_RASTER_EXT_REGEX.containsMatchIn(normalizedVideoPath)) {
+                normalizedVideoPath.replace(LOSSY_RASTER_EXT_REGEX, ".img")
             } else {
                 normalizedVideoPath
             }
@@ -131,7 +138,13 @@ object MediaDeduplicator {
             val filteredQuery = if (queryPart.isNotBlank()) {
                 queryPart.split("&").filter { param ->
                     val key = param.substringBefore("=").lowercase(Locale.ROOT)
-                    !TRACKING_QUERY_PARAMS.contains(key) && !SIZING_PARAMS.contains(key)
+                    val value = param.substringAfter("=", "")
+                    when {
+                        TRACKING_QUERY_PARAMS.contains(key) || SIZING_PARAMS.contains(key) -> false
+                        key == "s" -> !CONDITIONAL_S_VALUE_REGEX.matches(value)
+                        key == "f" -> !CONDITIONAL_F_VALUE_REGEX.matches(value)
+                        else -> true
+                    }
                 }.sorted().joinToString("&")
             } else ""
 

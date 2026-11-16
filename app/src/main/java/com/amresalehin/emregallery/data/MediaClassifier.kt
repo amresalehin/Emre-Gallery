@@ -63,11 +63,19 @@ object MediaClassifier {
     fun classify(url: String, mimeHint: String? = null): ClassificationResult {
         val lower = url.lowercase(Locale.ROOT)
         val mimeLower = mimeHint?.lowercase(Locale.ROOT) ?: ""
-        val cleanPath = lower.substringBefore("?").substringBefore("#")
+        val cleanPath = lower.substringBefore("?").substringBefore("#").trimEnd('/')
+        val queryPart = lower.substringAfter("?", "").substringBefore("#")
+        val queryParams = parseQueryParams(queryPart)
+        val queryFormatExt = (queryParams["format"] ?: queryParams["fmt"] ?: queryParams["ext"] ?: "")
+            .trim('.')
+            .lowercase(Locale.ROOT)
+        val queryMime = (queryParams["mime"] ?: queryParams["content-type"] ?: "").lowercase(Locale.ROOT)
+        val effectiveMime = if (queryMime.isNotBlank() && mimeLower.isBlank()) queryMime else "$mimeLower $queryMime".trim()
 
         // 1. Streaming media (HLS & DASH)
-        val isHlsManifest = cleanPath.endsWith(".m3u8") || lower.contains(".m3u8") ||
-            mimeLower.contains("x-mpegurl") || mimeLower.contains("vnd.apple.mpegurl") || mimeLower.contains("application/mpegurl")
+        val isHlsManifest = cleanPath.endsWith(".m3u8") || queryFormatExt == "m3u8" ||
+            effectiveMime.contains("x-mpegurl") || effectiveMime.contains("vnd.apple.mpegurl") ||
+            effectiveMime.contains("application/mpegurl")
         if (isHlsManifest) {
             return ClassificationResult(
                 category = MediaCategory.STREAMS,
@@ -78,8 +86,8 @@ object MediaClassifier {
                 isStream = true
             )
         }
-        val isDashManifest = cleanPath.endsWith(".mpd") || lower.contains(".mpd") ||
-            mimeLower.contains("dash+xml") || mimeLower.contains("video/vnd.mpeg.dash.mpd")
+        val isDashManifest = cleanPath.endsWith(".mpd") || queryFormatExt == "mpd" ||
+            effectiveMime.contains("dash+xml") || effectiveMime.contains("video/vnd.mpeg.dash.mpd")
         if (isDashManifest) {
             return ClassificationResult(
                 category = MediaCategory.STREAMS,
@@ -92,19 +100,19 @@ object MediaClassifier {
         }
 
         // 2. Video formats
-        classifyVideo(lower, mimeLower)?.let { return it }
+        classifyVideo(cleanPath, queryFormatExt, effectiveMime)?.let { return it }
 
         // 3. Audio formats
-        classifyAudio(lower, mimeLower)?.let { return it }
+        classifyAudio(cleanPath, queryFormatExt, effectiveMime)?.let { return it }
 
         // 4. Image formats
         val format = when {
-            lower.contains(".webp") || mimeLower.contains("webp") -> "WEBP"
-            lower.contains(".png") || mimeLower.contains("png") -> "PNG"
-            lower.contains(".gif") || mimeLower.contains("gif") -> "GIF"
-            lower.contains(".svg") || mimeLower.contains("svg") -> "SVG"
-            lower.contains(".avif") || mimeLower.contains("avif") -> "AVIF"
-            lower.contains(".bmp") || mimeLower.contains("bmp") -> "BMP"
+            cleanPath.endsWith(".webp") || queryFormatExt == "webp" || effectiveMime.contains("webp") -> "WEBP"
+            cleanPath.endsWith(".png") || queryFormatExt == "png" || effectiveMime.contains("png") -> "PNG"
+            cleanPath.endsWith(".gif") || queryFormatExt == "gif" || effectiveMime.contains("gif") -> "GIF"
+            cleanPath.endsWith(".svg") || queryFormatExt == "svg" || effectiveMime.contains("svg") -> "SVG"
+            cleanPath.endsWith(".avif") || queryFormatExt == "avif" || effectiveMime.contains("avif") -> "AVIF"
+            cleanPath.endsWith(".bmp") || queryFormatExt == "bmp" || effectiveMime.contains("bmp") -> "BMP"
             else -> "JPEG"
         }
         val imgMime = when (format) {
@@ -127,45 +135,84 @@ object MediaClassifier {
         )
     }
 
-    private fun classifyVideo(lower: String, mimeLower: String): ClassificationResult? {
-        if (lower.contains(".mp4") || mimeLower.contains("video/mp4") || lower.contains("video/mp4")) {
+    private fun parseQueryParams(queryPart: String): Map<String, String> {
+        if (queryPart.isBlank()) return emptyMap()
+        val result = mutableMapOf<String, String>()
+        for (pair in queryPart.split('&')) {
+            val eqIdx = pair.indexOf('=')
+            if (eqIdx > 0) {
+                val k = pair.substring(0, eqIdx)
+                val v = pair.substring(eqIdx + 1)
+                    .replace("%2f", "/", ignoreCase = true)
+                    .replace("%2b", "+", ignoreCase = true)
+                result[k] = v
+            }
+        }
+        return result
+    }
+
+    private fun classifyVideo(
+        cleanPath: String,
+        queryFormatExt: String,
+        mimeLower: String
+    ): ClassificationResult? {
+        if (cleanPath.endsWith(".mp4") || cleanPath.endsWith(".m4v") ||
+            queryFormatExt == "mp4" || queryFormatExt == "m4v" ||
+            mimeLower.contains("video/mp4")
+        ) {
             return videoResult("MP4", "video/mp4")
         }
-        if (lower.contains(".webm") || mimeLower.contains("video/webm")) {
+        if (cleanPath.endsWith(".webm") || queryFormatExt == "webm" || mimeLower.contains("video/webm")) {
             return videoResult("WEBM", "video/webm")
         }
-        if (lower.contains(".mov") || mimeLower.contains("video/quicktime")) {
+        if (cleanPath.endsWith(".mov") || queryFormatExt == "mov" || mimeLower.contains("video/quicktime")) {
             return videoResult("MOV", "video/quicktime")
         }
-        if (lower.contains(".mkv") || mimeLower.contains("video/x-matroska")) {
+        if (cleanPath.endsWith(".mkv") || queryFormatExt == "mkv" || mimeLower.contains("video/x-matroska")) {
             return videoResult("MKV", "video/x-matroska")
         }
         if (mimeLower.startsWith("video/")) {
-            val sub = mimeLower.substringAfter("video/").uppercase(Locale.ROOT)
-            return videoResult(sub, mimeLower)
+            val sub = mimeLower.substringAfter("video/").substringBefore(' ').uppercase(Locale.ROOT)
+            return videoResult(sub, mimeLower.substringBefore(' '))
         }
         return null
     }
 
-    private fun classifyAudio(lower: String, mimeLower: String): ClassificationResult? {
-        if (lower.contains(".mp3") || mimeLower.contains("audio/mpeg") || mimeLower.contains("audio/mp3")) {
+    private fun classifyAudio(
+        cleanPath: String,
+        queryFormatExt: String,
+        mimeLower: String
+    ): ClassificationResult? {
+        if (cleanPath.endsWith(".mp3") || queryFormatExt == "mp3" ||
+            mimeLower.contains("audio/mpeg") || mimeLower.contains("audio/mp3")
+        ) {
             return audioResult("MP3", "audio/mpeg")
         }
-        if (lower.contains(".m4a") || lower.contains(".aac") || mimeLower.contains("audio/aac") || mimeLower.contains("audio/mp4")) {
-            return audioResult(if (lower.contains(".aac")) "AAC" else "M4A", "audio/mp4")
+        if (cleanPath.endsWith(".m4a") || cleanPath.endsWith(".aac") ||
+            queryFormatExt == "m4a" || queryFormatExt == "aac" ||
+            mimeLower.contains("audio/aac") || mimeLower.contains("audio/mp4")
+        ) {
+            val isAac = cleanPath.endsWith(".aac") || queryFormatExt == "aac" || mimeLower.contains("audio/aac")
+            return audioResult(if (isAac) "AAC" else "M4A", "audio/mp4")
         }
-        if (lower.contains(".wav") || mimeLower.contains("audio/wav") || mimeLower.contains("audio/x-wav")) {
+        if (cleanPath.endsWith(".wav") || queryFormatExt == "wav" ||
+            mimeLower.contains("audio/wav") || mimeLower.contains("audio/x-wav")
+        ) {
             return audioResult("WAV", "audio/wav")
         }
-        if (lower.contains(".ogg") || lower.contains(".opus") || mimeLower.contains("audio/ogg") || mimeLower.contains("audio/opus")) {
-            return audioResult(if (lower.contains(".opus")) "OPUS" else "OGG", "audio/ogg")
+        if (cleanPath.endsWith(".ogg") || cleanPath.endsWith(".opus") ||
+            queryFormatExt == "ogg" || queryFormatExt == "opus" ||
+            mimeLower.contains("audio/ogg") || mimeLower.contains("audio/opus")
+        ) {
+            val isOpus = cleanPath.endsWith(".opus") || queryFormatExt == "opus" || mimeLower.contains("audio/opus")
+            return audioResult(if (isOpus) "OPUS" else "OGG", "audio/ogg")
         }
-        if (lower.contains(".flac") || mimeLower.contains("audio/flac")) {
+        if (cleanPath.endsWith(".flac") || queryFormatExt == "flac" || mimeLower.contains("audio/flac")) {
             return audioResult("FLAC", "audio/flac")
         }
         if (mimeLower.startsWith("audio/")) {
-            val sub = mimeLower.substringAfter("audio/").uppercase(Locale.ROOT)
-            return audioResult(sub, mimeLower)
+            val sub = mimeLower.substringAfter("audio/").substringBefore(' ').uppercase(Locale.ROOT)
+            return audioResult(sub, mimeLower.substringBefore(' '))
         }
         return null
     }

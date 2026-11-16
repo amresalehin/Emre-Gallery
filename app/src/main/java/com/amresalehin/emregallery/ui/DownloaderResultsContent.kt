@@ -20,6 +20,7 @@ import com.amresalehin.emregallery.data.ScrapedMediaItem
 internal fun DownloaderResultsBody(
     filteredItems: List<ScrapedMediaItem>,
     isExtracting: Boolean,
+    errorMessage: String? = null,
     selectedItemIds: Set<String>,
     finishedIds: Set<String>,
     finishedMediaUrls: Set<String>,
@@ -69,7 +70,8 @@ internal fun DownloaderResultsBody(
             }
             else -> {
                 DownloaderEmptyResultsState(
-                    onOpenInLiveBrowser = onOpenInLiveBrowser
+                    onOpenInLiveBrowser = onOpenInLiveBrowser,
+                    errorMessage = errorMessage
                 )
             }
         }

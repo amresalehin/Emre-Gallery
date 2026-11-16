@@ -24,10 +24,13 @@ class BrowserProvider(context: Context) : ExtractionProvider {
                 discoveredList.add(item)
                 onItemDiscovered(item)
             },
-            onFinished = {
+            onFinished = { errorMsg ->
                 if (continuation.isActive) {
                     continuation.resume(
-                        MediaExtractionResult(items = discoveredList),
+                        MediaExtractionResult(
+                            items = discoveredList,
+                            errorMessage = if (discoveredList.isEmpty()) errorMsg else null
+                        ),
                         onCancellation = { browserExtractor.cleanup() }
                     )
                 }

@@ -3,6 +3,7 @@ import json
 from engine_runtime import (
     POPULAR_EXTRACTORS,
     check_support,
+    check_ytdlp_support,
     get_engine_status,
 )
 from gdl_extractor_runner import extract_gallery_dl
@@ -71,6 +72,7 @@ __all__ = [
     "POPULAR_EXTRACTORS",
     "get_engine_status",
     "check_support",
+    "check_ytdlp_support",
     "extract_gallery_dl",
     "extract_yt_dlp",
     "extract_media",

@@ -3,6 +3,8 @@ import os
 from engine_runtime import (
     YTDLP_AVAILABLE,
     build_http_headers,
+    cleanup_temp_file,
+    create_netscape_cookie_file,
     yt_dlp,
 )
 
@@ -63,6 +65,7 @@ def _is_invalid_first_chunk(chunk):
 
 
 def _download_via_ytdlp(media_url, target_path, http_headers, socket_timeout=None):
+    cookie_file = create_netscape_cookie_file(http_headers.get("Cookie"), media_url)
     try:
         ydl_opts = {
             "outtmpl": target_path,
@@ -73,6 +76,8 @@ def _download_via_ytdlp(media_url, target_path, http_headers, socket_timeout=Non
         }
         if socket_timeout is not None:
             ydl_opts["socket_timeout"] = socket_timeout
+        if cookie_file:
+            ydl_opts["cookiefile"] = cookie_file
 
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             ydl.download([media_url])
@@ -84,6 +89,8 @@ def _download_via_ytdlp(media_url, target_path, http_headers, socket_timeout=Non
             return True
     except Exception:
         pass
+    finally:
+        cleanup_temp_file(cookie_file)
     return False
 
 

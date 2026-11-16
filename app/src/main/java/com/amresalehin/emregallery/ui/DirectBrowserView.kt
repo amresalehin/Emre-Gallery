@@ -199,6 +199,7 @@ fun DirectBrowserView(
                             coroutineScope.launch {
                                 historyManager.recordVisit(url, finishedTitle)
                             }
+                            view?.evaluateJavascript(MediaCaptureEngine.getNetworkAndBlobHooksScript(), null)
                             view?.evaluateJavascript(MediaCaptureEngine.getMutationObserverScript(), null)
                             scanCurrentPageDOM(view)
                         }

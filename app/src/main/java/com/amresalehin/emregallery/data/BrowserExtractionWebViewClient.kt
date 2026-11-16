@@ -23,6 +23,7 @@ internal class BrowserExtractionWebViewClient(
     private val adaptiveScroller: BrowserAdaptiveScroller,
     private val isCancelled: () -> Boolean,
     private val onStatusUpdate: (String) -> Unit,
+    private val onMainFrameError: (String) -> Unit = {},
     private val onComplete: () -> Unit
 ) : WebViewClient() {
 
@@ -71,6 +72,9 @@ internal class BrowserExtractionWebViewClient(
         failingUrl: String?
     ) {
         Log.w(TAG, "Page error: $errorCode $description on $failingUrl")
+        if (failingUrl == normalizedUrl || failingUrl?.startsWith(normalizedUrl) == true) {
+            onMainFrameError(description?.takeIf { it.isNotBlank() } ?: "Page load error ($errorCode)")
+        }
     }
 
     override fun onReceivedError(
@@ -79,7 +83,9 @@ internal class BrowserExtractionWebViewClient(
         error: WebResourceError?
     ) {
         if (request?.isForMainFrame == true) {
-            Log.w(TAG, "Main frame error: ${error?.errorCode} ${error?.description}")
+            val desc = error?.description?.toString()?.takeIf { it.isNotBlank() } ?: "Connection error"
+            Log.w(TAG, "Main frame error: ${error?.errorCode} $desc")
+            onMainFrameError("$desc (code ${error?.errorCode ?: -1})")
         }
     }
 
@@ -89,7 +95,12 @@ internal class BrowserExtractionWebViewClient(
         errorResponse: WebResourceResponse?
     ) {
         if (request?.isForMainFrame == true) {
-            Log.w(TAG, "HTTP error on main frame: ${errorResponse?.statusCode}")
+            val code = errorResponse?.statusCode ?: 0
+            Log.w(TAG, "HTTP error on main frame: $code")
+            if (code >= 400) {
+                val reason = errorResponse?.reasonPhrase?.takeIf { it.isNotBlank() } ?: ""
+                onMainFrameError("Browser HTTP $code ${reason}".trim())
+            }
         }
     }
 
@@ -116,6 +127,7 @@ internal class BrowserExtractionWebViewClient(
     override fun onPageStarted(view: WebView?, url: String?, favicon: Bitmap?) {
         if (isCancelled()) return
         onStatusUpdate("Browser loaded page. Active network interception listening...")
+        view?.evaluateJavascript(MediaCaptureEngine.getNetworkAndBlobHooksScript(), null)
     }
 
     override fun onPageFinished(view: WebView?, url: String?) {
@@ -125,7 +137,8 @@ internal class BrowserExtractionWebViewClient(
         BrowserCookieSync.syncWebViewToJar(normalizedUrl)
         onStatusUpdate("Scanning DOM, computed CSS, and dynamic media tags...")
 
-        // Setup MutationObserver for dynamically injected nodes
+        // Ensure network/blob hooks and MutationObserver are installed for dynamically injected content
+        webView.evaluateJavascript(MediaCaptureEngine.getNetworkAndBlobHooksScript(), null)
         webView.evaluateJavascript(MediaCaptureEngine.getMutationObserverScript(), null)
 
         // 1. Run initial deep DOM scan

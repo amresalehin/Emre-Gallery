@@ -2,6 +2,8 @@ package com.amresalehin.emregallery.ui
 
 import android.annotation.SuppressLint
 import android.graphics.Bitmap
+import android.os.Handler
+import android.os.Looper
 import android.view.ViewGroup
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceRequest
@@ -10,6 +12,7 @@ import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.viewinterop.AndroidView
 import com.amresalehin.emregallery.data.BrowserMediaExtractor
@@ -17,6 +20,7 @@ import com.amresalehin.emregallery.data.DownloaderSession
 import com.amresalehin.emregallery.data.ExtractionSource
 import com.amresalehin.emregallery.data.MediaCaptureEngine
 import com.amresalehin.emregallery.data.ScrapedMediaItem
+import java.util.concurrent.atomic.AtomicReference
 
 @SuppressLint("SetJavaScriptEnabled")
 @Composable
@@ -31,6 +35,25 @@ internal fun DirectBrowserWebViewContainer(
     onMediaExtracted: (ScrapedMediaItem) -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val mainHandler = remember { Handler(Looper.getMainLooper()) }
+    val latestBaseUrl = remember { AtomicReference(startUrl) }
+    val currentUrlSnapshot = getCurrentUrl()
+    if (currentUrlSnapshot.isNotBlank()) {
+        latestBaseUrl.set(currentUrlSnapshot)
+    }
+
+    fun dispatchExtractedOnMain(item: ScrapedMediaItem) {
+        if (Looper.myLooper() == Looper.getMainLooper()) {
+            DownloaderSession.addDiscoveredItem(item)
+            onMediaExtracted(item)
+        } else {
+            mainHandler.post {
+                DownloaderSession.addDiscoveredItem(item)
+                onMediaExtracted(item)
+            }
+        }
+    }
+
     AndroidView(
         factory = { ctx ->
             WebView(ctx).apply {
@@ -54,14 +77,14 @@ internal fun DirectBrowserWebViewContainer(
 
                 addJavascriptInterface(
                     BrowserMediaExtractor.EmreMediaBridge { rawUrl ->
+                        val base = latestBaseUrl.get().ifBlank { startUrl }
                         val item = MediaCaptureEngine.buildMediaItem(
                             rawUrl = rawUrl,
                             source = ExtractionSource.DOM_SCRAPE,
-                            baseUrl = getCurrentUrl()
+                            baseUrl = base
                         )
                         if (item != null) {
-                            onMediaExtracted(item)
-                            DownloaderSession.addDiscoveredItem(item)
+                            dispatchExtractedOnMain(item)
                         }
                     },
                     "EmreBridge"
@@ -93,10 +116,17 @@ internal fun DirectBrowserWebViewContainer(
                     }
 
                     override fun onPageStarted(view: WebView?, url: String?, favicon: Bitmap?) {
+                        if (!url.isNullOrBlank() && url != "about:blank") {
+                            latestBaseUrl.set(url)
+                        }
+                        view?.evaluateJavascript(MediaCaptureEngine.getNetworkAndBlobHooksScript(), null)
                         onPageStartedUrl(url, view?.canGoBack() == true, view?.canGoForward() == true)
                     }
 
                     override fun onPageFinished(view: WebView?, url: String?) {
+                        if (!url.isNullOrBlank() && url != "about:blank") {
+                            latestBaseUrl.set(url)
+                        }
                         onPageFinishedUrl(view, url, view?.canGoBack() == true, view?.canGoForward() == true)
                     }
 
@@ -109,10 +139,9 @@ internal fun DirectBrowserWebViewContainer(
 
                         return MediaCaptureEngine.shouldInterceptRequest(
                             request = request,
-                            baseUrl = getCurrentUrl()
+                            baseUrl = latestBaseUrl.get()
                         ) { item ->
-                            DownloaderSession.addDiscoveredItem(item)
-                            onMediaExtracted(item)
+                            dispatchExtractedOnMain(item)
                         }
                     }
                 }
@@ -126,8 +155,13 @@ internal fun DirectBrowserWebViewContainer(
         },
         update = { wv ->
             onWebViewChanged(wv)
+            val updatedUrl = getCurrentUrl()
+            if (updatedUrl.isNotBlank()) {
+                latestBaseUrl.set(updatedUrl)
+            }
         },
         onRelease = { wv ->
+            mainHandler.removeCallbacksAndMessages(null)
             wv.stopLoading()
             wv.webViewClient = WebViewClient()
             wv.webChromeClient = WebChromeClient()

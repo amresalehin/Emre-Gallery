@@ -14,7 +14,10 @@ class GalleryDlProvider : ExtractionProvider {
         val cookies = OkHttpDownloader.sharedCookieJar.getCookieString(context.url).takeIf { it.isNotBlank() }
         val res = GalleryDlEngine.extractGalleryDl(
             context.url,
-            GalleryDlOptions(cookies = cookies)
+            GalleryDlOptions(
+                userAgent = OkHttpDownloader.DEFAULT_USER_AGENT,
+                cookies = cookies
+            )
         )
         if (res.success) {
             for (item in res.items) {
@@ -27,14 +30,17 @@ class GalleryDlProvider : ExtractionProvider {
 }
 
 class YtDlpProvider : ExtractionProvider {
+    private val staticImageExts = setOf(
+        ".jpg", ".jpeg", ".png", ".webp", ".gif", ".svg", ".avif", ".bmp", ".ico"
+    )
+
     override fun isApplicable(context: MediaRequestContext): Boolean {
         if (!GalleryDlEngine.isAvailable()) return false
         val lower = context.url.lowercase()
-        val videoHosts = listOf(
-            "youtube.com", "youtu.be", "vimeo.com", "tiktok.com", "dailymotion.com",
-            "twitch.tv", "soundcloud.com", "bandcamp.com", "facebook.com", "instagram.com"
-        )
-        return videoHosts.any { lower.contains(it) } || lower.contains(".m3u8") || lower.contains(".mpd")
+        if (lower.startsWith("data:") || lower.startsWith("blob:")) return false
+        val cleanPath = lower.substringBefore('?').substringBefore('#')
+        if (staticImageExts.any { cleanPath.endsWith(it) }) return false
+        return GalleryDlEngine.checkYtDlpSupport(context.url)
     }
 
     override suspend fun extract(
@@ -46,7 +52,10 @@ class YtDlpProvider : ExtractionProvider {
         val cookies = OkHttpDownloader.sharedCookieJar.getCookieString(context.url).takeIf { it.isNotBlank() }
         val res = GalleryDlEngine.extractYtDlp(
             context.url,
-            GalleryDlOptions(cookies = cookies)
+            GalleryDlOptions(
+                userAgent = OkHttpDownloader.DEFAULT_USER_AGENT,
+                cookies = cookies
+            )
         )
         if (res.success) {
             for (item in res.items) {

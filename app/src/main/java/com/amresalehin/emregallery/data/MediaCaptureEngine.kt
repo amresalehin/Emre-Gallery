@@ -27,6 +27,11 @@ object MediaCaptureEngine {
     fun getAdaptiveScrollScript(): String = BrowserRuntimeScripts.adaptiveScrollScript()
 
     /**
+     * Shared JavaScript hooks for `fetch()`, `XMLHttpRequest`, `MediaSource`, and `URL.createObjectURL`.
+     */
+    fun getNetworkAndBlobHooksScript(): String = BrowserRuntimeScripts.networkAndBlobHooksScript()
+
+    /**
      * Builds and validates a ScrapedMediaItem with provenance, clean titles,
      * download headers (User-Agent, Referer, Cookie), and thumbnail classification.
      */

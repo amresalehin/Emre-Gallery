@@ -6,6 +6,8 @@ from engine_runtime import (
     DEFAULT_USER_AGENT,
     GALLERY_DL_AVAILABLE,
     _gdl_lock,
+    cleanup_temp_file,
+    create_netscape_cookie_file,
     gdl_config,
     gdl_extractor,
     gdl_job,
@@ -16,6 +18,7 @@ VIDEO_EXTS = ("mp4", "webm", "mkv", "mov", "avi")
 STREAM_EXTS = ("m3u8", "mpd")
 AUDIO_EXTS = ("mp3", "m4a", "aac", "wav", "flac", "ogg", "opus")
 IMAGE_MIME_EXTS = ("png", "jpeg", "jpg", "webp", "gif", "avif")
+DEFAULT_MAX_ITEMS = 80
 
 
 def _extract_entry_url_and_meta(entry):
@@ -34,24 +37,25 @@ def _extract_entry_url_and_meta(entry):
 
 def _classify_media(item_url, ext_suffix):
     lower_url = item_url.lower()
+    clean_path = lower_url.split("?")[0].split("#")[0]
     lower_ext = ext_suffix.lower() if ext_suffix else ""
 
     is_video = (
         lower_ext in VIDEO_EXTS
-        or lower_url.endswith(".mp4")
-        or lower_url.endswith(".webm")
-        or ".mp4?" in lower_url
+        or clean_path.endswith(".mp4")
+        or clean_path.endswith(".webm")
+        or clean_path.endswith(".mkv")
+        or clean_path.endswith(".mov")
     )
     is_stream = (
         lower_ext in STREAM_EXTS
-        or lower_url.endswith(".m3u8")
-        or ".m3u8?" in lower_url
-        or lower_url.endswith(".mpd")
+        or clean_path.endswith(".m3u8")
+        or clean_path.endswith(".mpd")
     )
     is_audio = (
         lower_ext in AUDIO_EXTS
-        or lower_url.endswith(".mp3")
-        or lower_url.endswith(".m4a")
+        or clean_path.endswith(".mp3")
+        or clean_path.endswith(".m4a")
     )
 
     if is_stream:
@@ -119,7 +123,7 @@ def _build_gdl_item(item_url, kwdict, index):
 
 
 def extract_gallery_dl(url, options_json="{}"):
-    """Extracts media items using gallery-dl exclusively."""
+    """Extracts media items using gallery-dl with isolated config, Netscape cookies, and pagination caps."""
     clean_url = url.strip() if url else ""
     if not clean_url or not GALLERY_DL_AVAILABLE:
         return json.dumps({
@@ -131,56 +135,74 @@ def extract_gallery_dl(url, options_json="{}"):
     opts = parse_options(options_json)
     user_agent = opts.get("user_agent") or DEFAULT_USER_AGENT
     cookies = opts.get("cookies")
+    timeout = int(opts.get("timeout") or 30)
+    max_items = int(opts.get("max_items") or DEFAULT_MAX_ITEMS)
 
     items = []
     page_title = ""
     seen_urls = set()
+    cookie_file = create_netscape_cookie_file(cookies, clean_url)
 
     try:
         with _gdl_lock:
+            gdl_config.clear()
             gdl_config.set(("extractor",), "user-agent", user_agent)
-            if cookies:
-                gdl_config.set(("extractor",), "cookies", cookies)
+            gdl_config.set(("extractor",), "timeout", timeout)
+            gdl_config.set(("extractor",), "retries", 2)
+            gdl_config.set(("extractor",), "range", f"1-{max_items}")
+            gdl_config.set(("extractor",), "image-range", f"1-{max_items}")
+            gdl_config.set(("extractor",), "chapter-range", "1-10")
+            if cookie_file:
+                gdl_config.set(("extractor",), "cookies", cookie_file)
+            if cookies and isinstance(cookies, str) and cookies.strip():
+                gdl_config.set(("extractor",), "headers", {"Cookie": cookies.strip()})
 
-            ext = gdl_extractor.find(clean_url)
-            if ext:
-                data_job = gdl_job.DataJob(ext, file=None, resolve=True)
-                data_job.run()
+            try:
+                ext = gdl_extractor.find(clean_url)
+                if ext:
+                    data_job = gdl_job.DataJob(ext, file=None, resolve=True)
+                    data_job.run()
 
-                for post in getattr(data_job, "data_post", []):
-                    if isinstance(post, dict):
-                        candidate_title = (
-                            post.get("title")
-                            or post.get("gallery_title")
-                            or post.get("album_title")
-                            or post.get("post_title")
-                            or post.get("name")
-                        )
-                        if candidate_title and not page_title:
-                            page_title = str(candidate_title)
+                    for post in getattr(data_job, "data_post", []):
+                        if isinstance(post, dict):
+                            candidate_title = (
+                                post.get("title")
+                                or post.get("gallery_title")
+                                or post.get("album_title")
+                                or post.get("post_title")
+                                or post.get("name")
+                            )
+                            if candidate_title and not page_title:
+                                page_title = str(candidate_title)
 
-                for entry in getattr(data_job, "data", []):
-                    item_url, kwdict = _extract_entry_url_and_meta(entry)
-                    if not item_url or item_url in seen_urls:
-                        continue
-                    seen_urls.add(item_url)
+                    for entry in getattr(data_job, "data", []):
+                        if len(items) >= max_items:
+                            break
+                        item_url, kwdict = _extract_entry_url_and_meta(entry)
+                        if not item_url or item_url in seen_urls:
+                            continue
+                        seen_urls.add(item_url)
 
-                    if not page_title:
-                        page_title = (
-                            kwdict.get("gallery_title")
-                            or kwdict.get("album_title")
-                            or kwdict.get("title")
-                            or kwdict.get("author")
-                            or ""
-                        )
+                        if not page_title:
+                            page_title = (
+                                kwdict.get("gallery_title")
+                                or kwdict.get("album_title")
+                                or kwdict.get("title")
+                                or kwdict.get("author")
+                                or ""
+                            )
 
-                    items.append(_build_gdl_item(item_url, kwdict, len(items)))
+                        items.append(_build_gdl_item(item_url, kwdict, len(items)))
+            finally:
+                gdl_config.clear()
     except Exception as e:
         return json.dumps({
             "success": False,
             "error": f"{e.__class__.__name__}: {str(e)}",
             "items": [],
         })
+    finally:
+        cleanup_temp_file(cookie_file)
 
     return json.dumps({
         "success": len(items) > 0,
