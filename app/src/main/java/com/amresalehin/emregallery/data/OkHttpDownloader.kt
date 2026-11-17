@@ -192,7 +192,9 @@ object OkHttpDownloader {
         referer: String? = null,
         downloadId: String? = null,
         headers: Map<String, String>? = null,
-        onProgress: ((bytesRead: Long, totalBytes: Long) -> Unit)? = null
+        onProgress: ((bytesRead: Long, totalBytes: Long) -> Unit)? = null,
+        domainSubfolder: String? = null,
+        useRenderedFileName: Boolean = false
     ): DownloadResult = withContext(Dispatchers.IO) {
         if (mediaUrl.startsWith("data:image/", ignoreCase = true)) {
             return@withContext DataUriMediaSaver.save(context, mediaUrl, fileName, downloadId)
@@ -205,7 +207,9 @@ object OkHttpDownloader {
             referer = referer,
             downloadId = downloadId,
             headers = headers,
-            onProgress = onProgress
+            onProgress = onProgress,
+            domainSubfolder = domainSubfolder,
+            useRenderedFileName = useRenderedFileName
         )
     }
 
@@ -219,9 +223,21 @@ object OkHttpDownloader {
         referer: String? = null,
         downloadId: String? = null,
         headers: Map<String, String>? = null,
-        onProgress: ((bytesRead: Long, totalBytes: Long) -> Unit)? = null
+        onProgress: ((bytesRead: Long, totalBytes: Long) -> Unit)? = null,
+        domainSubfolder: String? = null,
+        useRenderedFileName: Boolean = false
     ): File? {
-        val res = downloadMediaFileDetailed(context, mediaUrl, fileName, referer, downloadId, headers, onProgress)
+        val res = downloadMediaFileDetailed(
+            context = context,
+            mediaUrl = mediaUrl,
+            fileName = fileName,
+            referer = referer,
+            downloadId = downloadId,
+            headers = headers,
+            onProgress = onProgress,
+            domainSubfolder = domainSubfolder,
+            useRenderedFileName = useRenderedFileName
+        )
         return res.file
     }
 }

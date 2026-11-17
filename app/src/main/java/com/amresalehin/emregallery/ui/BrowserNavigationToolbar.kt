@@ -249,28 +249,28 @@ internal fun BrowserNavigationToolbar(
             if (discoveredCount > 0) {
                 Surface(
                     onClick = onSwitchToMediaTab,
-                    shape = RoundedCornerShape(12.dp),
-                    color = MaterialTheme.colorScheme.primaryContainer,
+                    shape = RoundedCornerShape(14.dp),
+                    color = MaterialTheme.colorScheme.primary,
                     modifier = Modifier
-                        .height(32.dp)
+                        .height(36.dp)
                         .testTag("browser_media_badge_top")
                 ) {
                     Row(
-                        modifier = Modifier.padding(horizontal = 8.dp),
+                        modifier = Modifier.padding(horizontal = 10.dp),
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(4.dp)
                     ) {
                         Icon(
                             imageVector = Icons.Default.PermMedia,
-                            contentDescription = null,
-                            tint = MaterialTheme.colorScheme.onPrimaryContainer,
-                            modifier = Modifier.size(14.dp)
+                            contentDescription = "Open $discoveredCount discovered media items",
+                            tint = MaterialTheme.colorScheme.onPrimary,
+                            modifier = Modifier.size(15.dp)
                         )
                         Text(
                             text = "$discoveredCount",
-                            style = MaterialTheme.typography.labelSmall,
+                            style = MaterialTheme.typography.labelMedium,
                             fontWeight = FontWeight.Bold,
-                            color = MaterialTheme.colorScheme.onPrimaryContainer
+                            color = MaterialTheme.colorScheme.onPrimary
                         )
                     }
                 }
@@ -278,14 +278,14 @@ internal fun BrowserNavigationToolbar(
                 IconButton(
                     onClick = onScanPage,
                     modifier = Modifier
-                        .size(34.dp)
+                        .size(36.dp)
                         .testTag("browser_scan_page_btn")
                 ) {
                     Icon(
                         imageVector = Icons.Default.TravelExplore,
                         contentDescription = "Scan media",
                         tint = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.size(19.dp)
+                        modifier = Modifier.size(20.dp)
                     )
                 }
             }

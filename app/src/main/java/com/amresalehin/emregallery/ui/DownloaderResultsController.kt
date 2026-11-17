@@ -31,6 +31,7 @@ import com.amresalehin.emregallery.data.DualMediaExtractor
 import com.amresalehin.emregallery.data.ImageDimensionProber
 import com.amresalehin.emregallery.data.MediaCategory
 import com.amresalehin.emregallery.data.MediaDeduplicator
+import com.amresalehin.emregallery.data.MediaFormatOption
 import com.amresalehin.emregallery.data.ScrapedMediaItem
 import com.amresalehin.emregallery.data.WebUrlUtils
 import kotlinx.coroutines.CoroutineScope
@@ -73,7 +74,19 @@ internal class DownloaderResultsController(
     var showSvg by mutableStateOf(false)
     var minKbInput by mutableStateOf("1")
 
+    var selectedFormats by mutableStateOf<Map<String, MediaFormatOption>>(emptyMap())
+    var formatPickerItem by mutableStateOf<ScrapedMediaItem?>(null)
+    var showDownloadOptionsDialog by mutableStateOf(false)
+
     val dynamicDimensions = mutableStateMapOf<String, Pair<Int, Int>>()
+
+    fun setFormatForItem(itemId: String, option: MediaFormatOption?) {
+        selectedFormats = if (option == null) {
+            selectedFormats - itemId
+        } else {
+            selectedFormats + (itemId to option)
+        }
+    }
 
     fun startEditingUrl() {
         if (!isEditingUrl) {
@@ -175,7 +188,8 @@ internal class DownloaderResultsController(
                 stackId = stackId,
                 stackTitle = stackTitle,
                 sourceDomain = domain,
-                sourceUrl = activeUrl
+                sourceUrl = activeUrl,
+                selectedFormats = selectedFormats
             )
 
             delay(300)

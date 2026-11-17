@@ -87,6 +87,7 @@ fun DirectBrowserView(
         val formatted = WebUrlUtils.formatQueryOrUrl(trimmed)
         addressInput = formatted
         currentUrl = formatted
+        pageTitle = ""
         onUrlChange?.invoke(formatted)
         coroutineScope.launch {
             historyManager.recordVisit(formatted)
@@ -151,6 +152,7 @@ fun DirectBrowserView(
                     addressInput = ""
                     pageTitle = ""
                     onUrlChange?.invoke("")
+                    DownloaderSession.resetDiscoveredForNavigation("")
                     webViewInstance?.loadUrl("about:blank")
                 },
                 onScanPage = { scanCurrentPageDOM(webViewInstance) },

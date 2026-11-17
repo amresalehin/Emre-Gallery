@@ -74,6 +74,42 @@ def _classify_media(item_url, ext_suffix):
     return "IMAGES", fmt, mime, False, False, False
 
 
+def _format_upload_date(raw_date):
+    if raw_date is None:
+        return None
+    if hasattr(raw_date, "strftime"):
+        try:
+            return raw_date.strftime("%Y%m%d")
+        except Exception:
+            pass
+    text = str(raw_date).strip()
+    if not text:
+        return None
+    digits = "".join(ch for ch in text[:10] if ch.isdigit())
+    if len(digits) == 8:
+        return digits
+    return text[:16]
+
+
+def _extract_uploader(kwdict):
+    for key in ("uploader", "author", "username", "artist", "creator", "subreddit"):
+        val = kwdict.get(key)
+        if isinstance(val, dict):
+            nested = val.get("name") or val.get("username") or val.get("nick")
+            if nested:
+                return str(nested).strip()
+        elif val:
+            return str(val).strip()
+    user_obj = kwdict.get("user")
+    if isinstance(user_obj, dict):
+        nested = user_obj.get("name") or user_obj.get("username") or user_obj.get("nick")
+        if nested:
+            return str(nested).strip()
+    elif isinstance(user_obj, str) and user_obj.strip():
+        return user_obj.strip()
+    return None
+
+
 def _build_gdl_item(item_url, kwdict, index):
     fn = kwdict.get("filename") or kwdict.get("name") or kwdict.get("title") or ""
     ext_suffix = kwdict.get("extension") or ""
@@ -98,6 +134,16 @@ def _build_gdl_item(item_url, kwdict, index):
     except Exception:
         size_bytes = None
 
+    raw_duration = kwdict.get("duration")
+    try:
+        duration_sec = int(float(raw_duration)) if raw_duration and float(raw_duration) > 0 else None
+    except Exception:
+        duration_sec = None
+
+    uploader = _extract_uploader(kwdict)
+    upload_date = _format_upload_date(kwdict.get("upload_date") or kwdict.get("date"))
+    media_id = kwdict.get("id") or kwdict.get("post_id") or kwdict.get("tweet_id") or kwdict.get("filename")
+
     thumb = (
         kwdict.get("thumbnail")
         or kwdict.get("thumb")
@@ -118,6 +164,10 @@ def _build_gdl_item(item_url, kwdict, index):
         "thumbnailUrl": thumb,
         "resolutionHint": resolution_hint,
         "sizeBytes": size_bytes,
+        "durationSeconds": duration_sec,
+        "uploader": uploader,
+        "uploadDate": upload_date,
+        "mediaId": str(media_id).strip() if media_id else None,
         "source": "gallery-dl",
     }
 

@@ -130,6 +130,28 @@ fun RealScrapedCard(
                         .padding(6.dp)
                         .size(20.dp)
                 )
+
+                val durationLabel = com.amresalehin.emregallery.data.DownloadFilenameFormatter.formatDurationSeconds(
+                    item.durationSeconds ?: item.metadata["duration"]?.toLongOrNull()
+                )
+                if (!durationLabel.isNullOrBlank()) {
+                    Surface(
+                        shape = RoundedCornerShape(4.dp),
+                        color = Color.Black.copy(alpha = 0.70f),
+                        modifier = Modifier
+                            .align(Alignment.BottomEnd)
+                            .padding(6.dp)
+                    ) {
+                        Text(
+                            text = durationLabel,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = Color.White,
+                            fontWeight = FontWeight.SemiBold,
+                            fontSize = 9.sp,
+                            modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp)
+                        )
+                    }
+                }
             }
 
             // Card Footer
@@ -157,7 +179,7 @@ fun RealScrapedCard(
                     val dimText = when {
                         w != null && h != null -> "${w}x${h}"
                         w != null -> "${w}w"
-                        !item.resolutionHint.isNullOrBlank() -> item.resolutionHint
+                        !item.resolutionHint.isNullOrBlank() && item.resolutionHint != "40 × 40" -> item.resolutionHint
                         else -> item.category.name.lowercase().replaceFirstChar { it.uppercase() }
                     }
                     Text(

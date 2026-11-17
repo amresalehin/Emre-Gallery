@@ -56,11 +56,15 @@ fun DownloaderResultsPage(
 
     BackHandler {
         when {
+            controller.formatPickerItem != null -> controller.formatPickerItem = null
+            controller.showDownloadOptionsDialog -> controller.showDownloadOptionsDialog = false
             controller.isEditingUrl -> controller.cancelUrlEdit()
             controller.showDimensionFilter -> controller.showDimensionFilter = false
             else -> onBack()
         }
     }
+
+    val hasActiveSizeFilter = (controller.minKbInput.toFloatOrNull() ?: 1f) != 1f
 
     Surface(
         color = MaterialTheme.colorScheme.background,
@@ -94,10 +98,14 @@ fun DownloaderResultsPage(
                 sortDropdownExpanded = controller.sortDropdownExpanded,
                 onSortDropdownExpandedChange = { controller.sortDropdownExpanded = it },
                 onSelectSortOption = { controller.sortOption = it },
-                hasActiveDimensionFilter = controller.minWidthFilter > 0 || controller.minHeightFilter > 0 || controller.showSvg,
+                hasActiveDimensionFilter = controller.minWidthFilter > 0 ||
+                    controller.minHeightFilter > 0 ||
+                    controller.showSvg ||
+                    hasActiveSizeFilter,
                 onToggleDimensionFilter = { controller.showDimensionFilter = !controller.showDimensionFilter },
                 isAllSelected = isAllSelected,
-                onToggleSelectAll = { controller.toggleSelectAll(filteredItems, isAllSelected) }
+                onToggleSelectAll = { controller.toggleSelectAll(filteredItems, isAllSelected) },
+                onOpenDownloadOptions = { controller.showDownloadOptionsDialog = true }
             )
 
             DownloaderDimensionFilterDrawer(
@@ -108,7 +116,9 @@ fun DownloaderResultsPage(
                 onMinWidthChange = { controller.minWidthFilter = it },
                 onMinHeightChange = { controller.minHeightFilter = it },
                 onShowSvgChange = { controller.showSvg = it },
-                onResetFilters = controller::resetDimensionFilters
+                onResetFilters = controller::resetDimensionFilters,
+                minKbInput = controller.minKbInput,
+                onMinKbChange = { controller.minKbInput = it }
             )
 
             DownloaderResultsBody(
@@ -116,12 +126,14 @@ fun DownloaderResultsPage(
                 isExtracting = observed.isExtracting,
                 errorMessage = observed.errorMessage,
                 selectedItemIds = controller.selectedItemIds,
+                selectedFormats = controller.selectedFormats,
                 finishedIds = observed.finishedIds,
                 finishedMediaUrls = observed.finishedMediaUrls,
                 dynamicDimensions = controller.dynamicDimensions,
                 isDownloading = controller.isDownloading,
                 isDownloaded = controller.isDownloaded,
                 onToggleItem = controller::toggleSelection,
+                onSelectItemFormat = { item -> controller.formatPickerItem = item },
                 onOpenInLiveBrowser = { onOpenBrowser?.invoke(controller.activeUrl) },
                 onDownloadSelected = {
                     controller.enqueueSelectedDownloads(
@@ -134,6 +146,24 @@ fun DownloaderResultsPage(
                 modifier = Modifier
                     .weight(1f)
                     .fillMaxWidth()
+            )
+        }
+
+        controller.formatPickerItem?.let { item ->
+            MediaFormatPickerDialog(
+                item = item,
+                selectedOption = controller.selectedFormats[item.id],
+                onSelectOption = { opt ->
+                    controller.setFormatForItem(item.id, opt)
+                    controller.formatPickerItem = null
+                },
+                onDismiss = { controller.formatPickerItem = null }
+            )
+        }
+
+        if (controller.showDownloadOptionsDialog) {
+            DownloaderSettingsDialog(
+                onDismiss = { controller.showDownloadOptionsDialog = false }
             )
         }
     }

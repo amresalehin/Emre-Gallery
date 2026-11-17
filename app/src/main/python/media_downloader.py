@@ -64,14 +64,21 @@ def _is_invalid_first_chunk(chunk):
     return b"#extm3u" in prefix or b"<mpd" in prefix
 
 
-def _download_via_ytdlp(media_url, target_path, http_headers, socket_timeout=None):
+DEFAULT_YTDLP_FORMAT = "b[vcodec!=none][acodec!=none]/best[vcodec!=none][acodec!=none]/best"
+
+
+def _download_via_ytdlp(media_url, target_path, http_headers, socket_timeout=None, format_selector=None):
     cookie_file = create_netscape_cookie_file(http_headers.get("Cookie"), media_url)
     try:
+        parent_dir = os.path.dirname(target_path)
+        if parent_dir:
+            os.makedirs(parent_dir, exist_ok=True)
+        selected_fmt = format_selector.strip() if isinstance(format_selector, str) and format_selector.strip() else DEFAULT_YTDLP_FORMAT
         ydl_opts = {
             "outtmpl": target_path,
             "quiet": True,
             "no_warnings": True,
-            "format": "b[vcodec!=none][acodec!=none]/best[vcodec!=none][acodec!=none]/best",
+            "format": selected_fmt,
             "http_headers": http_headers,
         }
         if socket_timeout is not None:
@@ -136,10 +143,11 @@ def download_media_file(
     user_agent=None,
     cookies=None,
     headers_json=None,
+    format_selector=None,
 ):
     """
-    Downloads media file using yt-dlp (with single pre-muxed format) or requests with cookies/headers.
-    Never commits raw .m3u8 or .mpd playlist text as a finished file.
+    Downloads media file using yt-dlp (respecting optional format_selector for resolution/codec/audio-only)
+    or requests with cookies/headers. Never commits raw .m3u8 or .mpd playlist text as a finished file.
     """
     headers = build_http_headers(
         user_agent=user_agent,
@@ -148,12 +156,19 @@ def download_media_file(
         headers_json=headers_json,
     )
     lower_url = media_url.lower()
+    has_custom_format = isinstance(format_selector, str) and bool(format_selector.strip())
     is_stream = (".m3u8" in media_url) or (".mpd" in media_url)
     is_social_or_video = any(host in lower_url for host in SOCIAL_OR_VIDEO_HOSTS)
 
-    # 1. For streams or social pages, prioritize yt-dlp directly
-    if (is_stream or is_social_or_video) and YTDLP_AVAILABLE:
-        if _download_via_ytdlp(media_url, target_path, headers, socket_timeout=30):
+    # 1. For explicit format selection, streams, or social pages, prioritize yt-dlp directly
+    if (has_custom_format or is_stream or is_social_or_video) and YTDLP_AVAILABLE:
+        if _download_via_ytdlp(
+            media_url,
+            target_path,
+            headers,
+            socket_timeout=30,
+            format_selector=format_selector,
+        ):
             return True
 
     # 2. Direct HTTP requests download
@@ -162,9 +177,14 @@ def download_media_file(
 
     # 3. Fallback to yt-dlp if direct request failed and target is a video/stream
     if YTDLP_AVAILABLE and (
-        is_stream or any(marker in lower_url for marker in FALLBACK_VIDEO_MARKERS)
+        has_custom_format or is_stream or any(marker in lower_url for marker in FALLBACK_VIDEO_MARKERS)
     ):
-        if _download_via_ytdlp(media_url, target_path, headers):
+        if _download_via_ytdlp(
+            media_url,
+            target_path,
+            headers,
+            format_selector=format_selector,
+        ):
             return True
 
     return False

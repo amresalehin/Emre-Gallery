@@ -27,9 +27,18 @@ internal object ResumableMediaTransfer {
         referer: String?,
         downloadId: String?,
         headers: Map<String, String>?,
-        onProgress: ((bytesRead: Long, totalBytes: Long) -> Unit)?
+        onProgress: ((bytesRead: Long, totalBytes: Long) -> Unit)?,
+        domainSubfolder: String? = null,
+        useRenderedFileName: Boolean = false
     ): OkHttpDownloader.DownloadResult {
-        val targets = MediaDownloadStorage.resolveDownloadTargets(context, mediaUrl, fileName, downloadId)
+        val targets = MediaDownloadStorage.resolveDownloadTargets(
+            context = context,
+            mediaUrl = mediaUrl,
+            fileName = fileName,
+            downloadId = downloadId,
+            domainSubfolder = domainSubfolder,
+            useRenderedFileName = useRenderedFileName
+        )
         val finalFile = targets.finalFile
         val tempFile = targets.tempFile
         val metaFile = targets.metaFile

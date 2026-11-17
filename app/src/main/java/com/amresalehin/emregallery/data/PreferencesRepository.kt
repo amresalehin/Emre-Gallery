@@ -4,6 +4,7 @@ import android.content.Context
 import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.preferencesDataStore
+import com.amresalehin.emregallery.data.preferences.DownloaderPreferences
 import com.amresalehin.emregallery.data.preferences.MediaCollectionsPreferencesManager
 import com.amresalehin.emregallery.data.preferences.OcrPreferencesManager
 import com.amresalehin.emregallery.data.preferences.UiPreferencesManager
@@ -18,9 +19,11 @@ val Context.galleryDataStore: DataStore<Preferences> by preferencesDataStore(nam
  * - [vaultPrefs]: Security, locked folder PIN hash, and biometrics
  * - [ocrPrefs]: OCR models, languages, and engines
  * - [mediaPrefs]: Albums, tags, people, favorites, trash bin, archive, and search history
+ * - [DownloaderPreferences]: Downloader filename template, domain subfolders, and quality preset
  */
 class PreferencesRepository(context: Context) {
 
+    private val appContext = context.applicationContext
     private val uiPrefs = UiPreferencesManager(context)
     private val vaultPrefs = VaultPreferencesManager(context)
     private val ocrPrefs = OcrPreferencesManager(context)
@@ -98,4 +101,12 @@ class PreferencesRepository(context: Context) {
     suspend fun clearRecentSearches() = mediaPrefs.clearRecentSearches()
     suspend fun addTagForMedia(uri: String, tag: String) = mediaPrefs.addTagForMedia(uri, tag)
     suspend fun addPersonForMedia(uri: String, person: String) = mediaPrefs.addPersonForMedia(uri, person)
+
+    // --- Media Downloader Preferences ---
+    fun getDownloaderFilenameTemplate(): String = DownloaderPreferences.getFilenameTemplate(appContext)
+    fun setDownloaderFilenameTemplate(template: String) = DownloaderPreferences.setFilenameTemplate(appContext, template)
+    fun isDownloaderSubfolderByDomain(): Boolean = DownloaderPreferences.isSubfolderByDomainEnabled(appContext)
+    fun setDownloaderSubfolderByDomain(enabled: Boolean) = DownloaderPreferences.setSubfolderByDomain(appContext, enabled)
+    fun getDownloaderPreferredQuality(): String = DownloaderPreferences.getPreferredQualityPreset(appContext)
+    fun setDownloaderPreferredQuality(preset: String) = DownloaderPreferences.setPreferredQualityPreset(appContext, preset)
 }

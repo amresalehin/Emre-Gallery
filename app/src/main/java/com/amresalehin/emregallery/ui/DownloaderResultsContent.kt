@@ -22,12 +22,14 @@ internal fun DownloaderResultsBody(
     isExtracting: Boolean,
     errorMessage: String? = null,
     selectedItemIds: Set<String>,
+    selectedFormats: Map<String, com.amresalehin.emregallery.data.MediaFormatOption> = emptyMap(),
     finishedIds: Set<String>,
     finishedMediaUrls: Set<String>,
     dynamicDimensions: Map<String, Pair<Int, Int>>,
     isDownloading: Boolean,
     isDownloaded: Boolean,
     onToggleItem: (String) -> Unit,
+    onSelectItemFormat: ((ScrapedMediaItem) -> Unit)? = null,
     onOpenInLiveBrowser: () -> Unit,
     onDownloadSelected: () -> Unit,
     modifier: Modifier = Modifier
@@ -51,6 +53,8 @@ internal fun DownloaderResultsBody(
                             isSelected = item.id in selectedItemIds,
                             isDownloaded = item.id in finishedIds || item.url in finishedMediaUrls,
                             dynamicDimensions = dynamicDimensions,
+                            selectedFormat = selectedFormats[item.id],
+                            onFormatBadgeClick = onSelectItemFormat?.let { cb -> { cb(item) } },
                             onToggle = { onToggleItem(item.id) }
                         )
                     }

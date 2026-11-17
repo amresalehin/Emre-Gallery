@@ -238,9 +238,23 @@ object GalleryDlEngine {
                 }
             }
 
+            val durationSec = if (obj.has("durationSeconds") && !obj.isNull("durationSeconds")) {
+                obj.optLong("durationSeconds", -1L).takeIf { it > 0L }
+            } else null
+
             val metadataMap = mutableMapOf("source_url" to pageUrl)
             if (webpageUrl != pageUrl) {
                 metadataMap["webpage_url"] = webpageUrl
+            }
+            durationSec?.let { metadataMap["duration"] = it.toString() }
+            obj.optString("uploader", "").takeIf { it.isNotBlank() && it != "null" }?.let {
+                metadataMap["uploader"] = it
+            }
+            obj.optString("uploadDate", "").takeIf { it.isNotBlank() && it != "null" }?.let {
+                metadataMap["upload_date"] = it
+            }
+            obj.optString("mediaId", "").takeIf { it.isNotBlank() && it != "null" }?.let {
+                metadataMap["media_id"] = it
             }
             val formatsArr = obj.optJSONArray("formats")
             if (formatsArr != null && formatsArr.length() > 0) {
@@ -268,16 +282,17 @@ object GalleryDlEngine {
                 category = mediaCategory,
                 format = obj.optString("format", "IMAGE"),
                 mimeType = obj.optString("mimeType", if (isVideo) "video/mp4" else "image/jpeg"),
-                thumbnailUrl = obj.optString("thumbnailUrl").takeIf { !it.isNullOrBlank() },
+                thumbnailUrl = obj.optString("thumbnailUrl").takeIf { !it.isNullOrBlank() && it != "null" },
                 source = sourceLabel,
-                resolutionHint = obj.optString("resolutionHint").takeIf { !it.isNullOrBlank() },
+                resolutionHint = obj.optString("resolutionHint").takeIf { !it.isNullOrBlank() && it != "null" },
                 sizeBytes = if (obj.has("sizeBytes") && !obj.isNull("sizeBytes")) obj.getLong("sizeBytes") else null,
                 provenance = MediaProvenance(
                     extractorEngine = sourceLabel,
                     pageUrl = webpageUrl
                 ),
                 metadata = metadataMap,
-                downloadHeaders = headersMap
+                downloadHeaders = headersMap,
+                durationSeconds = durationSec
             )
             itemsList.add(item)
         }
@@ -354,25 +369,20 @@ object GalleryDlEngine {
         fileName: String,
         referer: String? = null,
         headers: Map<String, String>? = null,
-        cookies: String? = null
+        cookies: String? = null,
+        formatSpec: String? = null,
+        domainSubfolder: String? = null,
+        useExactFileName: Boolean = false
     ): File? = withContext(Dispatchers.IO) {
         try {
-            val publicDownloads = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
-            val emreGalleryDir = File(publicDownloads, "Emre Gallery")
-            if (!emreGalleryDir.exists()) {
-                emreGalleryDir.mkdirs()
-            }
-            val dir = if (emreGalleryDir.exists() && emreGalleryDir.canWrite()) {
-                emreGalleryDir
+            val dir = MediaDownloadStorage.getTargetStorageDir(context, domainSubfolder)
+            val cleanName = fileName.replace(Regex("[\\\\/:*?\"<>|\\p{Cntrl}]"), "_").trim().ifBlank { "media" }
+            val targetFile = if (useExactFileName) {
+                MediaDownloadStorage.uniqueTargetFile(dir, cleanName)
             } else {
-                val appExternal = context.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS)
-                val fallbackFolder = File(appExternal ?: context.filesDir, "Emre Gallery")
-                if (!fallbackFolder.exists()) fallbackFolder.mkdirs()
-                fallbackFolder
+                val sanitizedName = fileName.replace(Regex("[^a-zA-Z0-9._-]"), "_")
+                File(dir, "${System.currentTimeMillis()}_$sanitizedName")
             }
-
-            val sanitizedName = fileName.replace(Regex("[^a-zA-Z0-9._-]"), "_")
-            val targetFile = File(dir, "${System.currentTimeMillis()}_$sanitizedName")
 
             val userAgent = headers?.get("User-Agent") ?: "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36"
             val effectiveCookies = cookies ?: headers?.get("Cookie")
@@ -393,7 +403,8 @@ object GalleryDlEngine {
                     referer ?: "",
                     userAgent,
                     effectiveCookies ?: "",
-                    headersJson
+                    headersJson,
+                    formatSpec ?: ""
                 ).toBoolean()
 
                 if (success && targetFile.exists() && targetFile.length() > 0L) {
@@ -413,7 +424,9 @@ object GalleryDlEngine {
                 mediaUrl = mediaUrl,
                 fileName = fileName,
                 referer = referer,
-                headers = headers
+                headers = headers,
+                domainSubfolder = domainSubfolder,
+                useRenderedFileName = useExactFileName
             )
         } catch (e: Exception) {
             Log.e(TAG, "downloadMedia failed", e)

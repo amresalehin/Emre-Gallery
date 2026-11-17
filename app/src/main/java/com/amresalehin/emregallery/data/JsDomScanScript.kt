@@ -89,11 +89,35 @@ internal object JsDomScanScript {
                     }
                 }
 
+                function parseIsoDuration(raw) {
+                    if (raw == null) return null;
+                    if (typeof raw === 'number' && isFinite(raw) && raw > 0) return Math.round(raw);
+                    var str = String(raw).trim();
+                    if (!str) return null;
+                    if (/^\d+(?:\.\d+)?$/.test(str)) {
+                        var num = Math.round(parseFloat(str));
+                        return num > 0 ? num : null;
+                    }
+                    var m = str.match(/^PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+(?:\.\d+)?)S)?$/i);
+                    if (m) {
+                        var h = parseInt(m[1] || '0', 10);
+                        var min = parseInt(m[2] || '0', 10);
+                        var sec = Math.round(parseFloat(m[3] || '0'));
+                        var tot = h * 3600 + min * 60 + sec;
+                        return tot > 0 ? tot : null;
+                    }
+                    return null;
+                }
+
                 // 2. Video Elements & Sources
                 var videos = document.querySelectorAll('video');
                 for (var v = 0; v < videos.length; v++) {
                     var vid = videos[v];
                     var poster = resolveAbs(vid.getAttribute('poster') || vid.poster);
+                    var vidDuration = (vid.duration && isFinite(vid.duration) && vid.duration > 0) ? Math.round(vid.duration) : null;
+                    var vidW = (vid.videoWidth && vid.videoWidth > 0) ? vid.videoWidth : null;
+                    var vidH = (vid.videoHeight && vid.videoHeight > 0) ? vid.videoHeight : null;
+                    var vidRes = (vidW && vidH) ? (vidW + 'x' + vidH) : 'video';
                     var chosenVideo = null;
                     if (vid.src && !vid.src.startsWith('blob:') && !vid.src.startsWith('data:')) {
                         chosenVideo = resolveAbs(vid.src);
@@ -108,7 +132,7 @@ internal object JsDomScanScript {
                         }
                     }
                     if (chosenVideo) {
-                        list.push({u: chosenVideo, s: 'DOM', p: poster, r: 'video'});
+                        list.push({u: chosenVideo, s: 'DOM', p: poster, r: vidRes, d: vidDuration});
                     } else if (poster) {
                         list.push({u: poster, s: 'POSTER', r: 'poster'});
                     }
@@ -118,6 +142,7 @@ internal object JsDomScanScript {
                 var audios = document.querySelectorAll('audio');
                 for (var a = 0; a < audios.length; a++) {
                     var au = audios[a];
+                    var auDuration = (au.duration && isFinite(au.duration) && au.duration > 0) ? Math.round(au.duration) : null;
                     var chosenAudio = null;
                     if (au.src && !au.src.startsWith('blob:') && !au.src.startsWith('data:')) {
                         chosenAudio = resolveAbs(au.src);
@@ -132,7 +157,7 @@ internal object JsDomScanScript {
                         }
                     }
                     if (chosenAudio) {
-                        list.push({u: chosenAudio, s: 'DOM', r: 'audio'});
+                        list.push({u: chosenAudio, s: 'DOM', r: 'audio', d: auDuration});
                     }
                 }
 
@@ -144,9 +169,10 @@ internal object JsDomScanScript {
                         var arr = Array.isArray(parsed) ? parsed : [parsed];
                         for (var idx = 0; idx < arr.length; idx++) {
                             var item = arr[idx];
+                            var itemDuration = parseIsoDuration(item.duration);
                             if (item.contentUrl) {
                                 var cu = resolveAbs(item.contentUrl);
-                                if (cu) list.push({u: cu, s: 'DOM', r: 'json-ld'});
+                                if (cu) list.push({u: cu, s: 'DOM', r: 'json-ld', d: itemDuration});
                             }
                             if (item.thumbnailUrl) {
                                 var tu = resolveAbs(item.thumbnailUrl);

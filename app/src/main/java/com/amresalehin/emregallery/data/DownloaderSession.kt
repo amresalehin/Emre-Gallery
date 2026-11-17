@@ -65,6 +65,24 @@ object DownloaderSession {
         }
     }
 
+    fun resetDiscoveredForNavigation(newUrl: String) {
+        val trimmed = newUrl.trim()
+        val domain = if (trimmed.isNotBlank()) {
+            runCatching { URL(trimmed).host }.getOrDefault("")
+        } else {
+            ""
+        }
+        synchronized(itemsLock) {
+            _currentUrl.value = trimmed
+            _sourceDomain.value = domain
+            _pageTitle.value = domain
+            canonicalMap.clear()
+            _discoveredItems.value = emptyList()
+            _selectedItemIds.value = emptySet()
+            _errorMessage.value = null
+        }
+    }
+
     fun addDiscoveredItems(newItems: List<ScrapedMediaItem>, title: String? = null) {
         if (newItems.isEmpty()) return
         synchronized(itemsLock) {

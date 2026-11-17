@@ -26,10 +26,11 @@ fun FullScreenBrowserView(
     )
 
     BackHandler {
-        if (controller.showDiscoveredMediaSheet) {
-            controller.showDiscoveredMediaSheet = false
-        } else {
-            onClose()
+        when {
+            controller.formatPickerItem != null -> controller.formatPickerItem = null
+            controller.showDownloadSettingsDialog -> controller.showDownloadSettingsDialog = false
+            controller.showDiscoveredMediaSheet -> controller.showDiscoveredMediaSheet = false
+            else -> onClose()
         }
     }
 
@@ -40,8 +41,9 @@ fun FullScreenBrowserView(
         Box(modifier = Modifier.fillMaxSize()) {
             DirectBrowserView(
                 initialUrl = controller.currentUrl,
+                discoveredCount = controller.discoveredItems.size,
                 onClose = onClose,
-                onUrlChange = { controller.currentUrl = it },
+                onUrlChange = controller::onNavigatedUrl,
                 onPageTitleChanged = { controller.pageTitle = it },
                 onMediaExtracted = controller::onMediaExtracted,
                 onBatchExtracted = { batch, title, _ ->
@@ -61,13 +63,34 @@ fun FullScreenBrowserView(
                 filteredItems = controller.filteredItems,
                 selectedFilter = controller.selectedFilter,
                 selectedItemIds = controller.selectedItemIds,
+                selectedFormats = controller.selectedFormats,
                 isDownloading = controller.isDownloading,
                 downloadProgress = controller.downloadProgress,
                 onToggleFilter = controller::toggleFilter,
                 onToggleSelectAll = controller::toggleSelectAllFiltered,
                 onItemSelectionChange = controller::setItemSelected,
+                onSelectItemFormat = { item -> controller.formatPickerItem = item },
+                onOpenDownloadSettings = { controller.showDownloadSettingsDialog = true },
                 onDismiss = { controller.showDiscoveredMediaSheet = false },
                 onDownloadSelected = controller::downloadSelected
+            )
+        }
+
+        controller.formatPickerItem?.let { item ->
+            MediaFormatPickerDialog(
+                item = item,
+                selectedOption = controller.selectedFormats[item.id],
+                onSelectOption = { opt ->
+                    controller.setFormatForItem(item.id, opt)
+                    controller.formatPickerItem = null
+                },
+                onDismiss = { controller.formatPickerItem = null }
+            )
+        }
+
+        if (controller.showDownloadSettingsDialog) {
+            DownloaderSettingsDialog(
+                onDismiss = { controller.showDownloadSettingsDialog = false }
             )
         }
     }

@@ -19,7 +19,6 @@ import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -34,7 +33,8 @@ fun DownloaderFloatingActionPill(
 ) {
     Surface(
         shape = RoundedCornerShape(24.dp),
-        color = Color(0xFF212529),
+        color = MaterialTheme.colorScheme.primary,
+        contentColor = MaterialTheme.colorScheme.onPrimary,
         shadowElevation = 8.dp,
         modifier = modifier
             .navigationBarsPadding()
@@ -52,18 +52,18 @@ fun DownloaderFloatingActionPill(
                 isDownloading -> CircularProgressIndicator(
                     modifier = Modifier.size(18.dp),
                     strokeWidth = 2.dp,
-                    color = Color.White
+                    color = MaterialTheme.colorScheme.onPrimary
                 )
                 isDownloaded -> Icon(
                     imageVector = Icons.Default.Check,
                     contentDescription = "Downloaded",
-                    tint = Color.White,
+                    tint = MaterialTheme.colorScheme.onPrimary,
                     modifier = Modifier.size(20.dp)
                 )
                 else -> Icon(
                     imageVector = Icons.Default.ArrowDownward,
                     contentDescription = "Download selected",
-                    tint = Color.White,
+                    tint = MaterialTheme.colorScheme.onPrimary,
                     modifier = Modifier.size(20.dp)
                 )
             }
@@ -71,7 +71,7 @@ fun DownloaderFloatingActionPill(
                 text = "($selectedCount)",
                 style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.Bold,
-                color = Color.White
+                color = MaterialTheme.colorScheme.onPrimary
             )
         }
     }

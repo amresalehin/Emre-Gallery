@@ -39,13 +39,28 @@ internal object MediaDownloadStorage {
         return if (ext.isNotEmpty()) "${base}_$hash.$ext" else "${base}_$hash"
     }
 
-    fun getTargetStorageDir(context: Context): File {
+    fun uniqueTargetFile(dir: File, desiredFileName: String): File {
+        val candidate = File(dir, desiredFileName)
+        if (!candidate.exists()) return candidate
+        val stem = desiredFileName.substringBeforeLast('.', desiredFileName)
+        val ext = desiredFileName.substringAfterLast('.', "")
+        var counter = 1
+        while (counter < 1000) {
+            val nextName = if (ext.isNotEmpty()) "${stem}_$counter.$ext" else "${stem}_$counter"
+            val nextFile = File(dir, nextName)
+            if (!nextFile.exists()) return nextFile
+            counter++
+        }
+        return candidate
+    }
+
+    fun getTargetStorageDir(context: Context, domainSubfolder: String? = null): File {
         val publicDownloads = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
         val emreGalleryDir = File(publicDownloads, "Emre Gallery")
         if (!emreGalleryDir.exists()) {
             emreGalleryDir.mkdirs()
         }
-        return if (emreGalleryDir.exists() && emreGalleryDir.canWrite()) {
+        val baseDir = if (emreGalleryDir.exists() && emreGalleryDir.canWrite()) {
             emreGalleryDir
         } else {
             val appExternal = context.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS)
@@ -53,15 +68,28 @@ internal object MediaDownloadStorage {
             if (!fallbackFolder.exists()) fallbackFolder.mkdirs()
             fallbackFolder
         }
+        val safeDomain = DownloadFilenameFormatter.sanitizeDomainFolder(domainSubfolder)
+        if (!safeDomain.isNullOrBlank()) {
+            val domainDir = File(baseDir, safeDomain)
+            if (!domainDir.exists()) {
+                domainDir.mkdirs()
+            }
+            if (domainDir.exists() && domainDir.canWrite()) {
+                return domainDir
+            }
+        }
+        return baseDir
     }
 
     fun resolveDownloadTargets(
         context: Context,
         mediaUrl: String,
         fileName: String,
-        downloadId: String?
+        downloadId: String?,
+        domainSubfolder: String? = null,
+        useRenderedFileName: Boolean = false
     ): DownloadTargets {
-        val targetDir = getTargetStorageDir(context)
+        val targetDir = getTargetStorageDir(context, domainSubfolder)
         val sanitizedName = sanitizeFileName(fileName)
         val deterministicBase = if (!downloadId.isNullOrBlank()) {
             val cleanId = sanitizeFileName(downloadId)
@@ -75,8 +103,18 @@ internal object MediaDownloadStorage {
             generateDeterministicId(mediaUrl, sanitizedName)
         }
 
+        val finalFile = if (useRenderedFileName && fileName.isNotBlank()) {
+            val cleanedDisplayName = fileName
+                .replace(Regex("[\\\\/:*?\"<>|\\p{Cntrl}]"), "_")
+                .trim()
+                .ifBlank { deterministicBase }
+            uniqueTargetFile(targetDir, cleanedDisplayName)
+        } else {
+            File(targetDir, deterministicBase)
+        }
+
         return DownloadTargets(
-            finalFile = File(targetDir, deterministicBase),
+            finalFile = finalFile,
             tempFile = File(targetDir, "$deterministicBase.downloading"),
             metaFile = File(targetDir, "$deterministicBase.meta")
         )

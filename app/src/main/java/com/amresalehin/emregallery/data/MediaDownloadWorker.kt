@@ -89,6 +89,10 @@ class MediaDownloadWorker(
         val sourceUrl = inputData.getString(KEY_SOURCE_URL) ?: mediaUrl
         val sourceEngine = inputData.getString(KEY_SOURCE_ENGINE) ?: ""
         val headersJson = inputData.getString(KEY_HEADERS_JSON)
+        val formatSpec = inputData.getString(KEY_FORMAT_SPEC)?.takeIf { it.isNotBlank() }
+        val targetSubfolder = inputData.getString(KEY_TARGET_SUBFOLDER)?.takeIf { it.isNotBlank() }
+        val useRenderedFileName = inputData.getBoolean(KEY_USE_RENDERED_FILENAME, false)
+        val webpageUrl = inputData.getString(KEY_WEBPAGE_URL)?.takeIf { it.isNotBlank() }
 
         val downloadHeaders: Map<String, String> = runCatching {
             if (!headersJson.isNullOrBlank()) {
@@ -121,18 +125,22 @@ class MediaDownloadWorker(
             val isSocialUrl = listOf("youtube.com", "youtu.be", "tiktok.com", "instagram.com", "vimeo.com", "twitter.com", "x.com")
                 .any { mediaUrl.contains(it, ignoreCase = true) }
             val isStreamingMedia = isStream || mediaUrl.contains(".m3u8", ignoreCase = true) || mediaUrl.contains(".mpd", ignoreCase = true)
-            val isYtDlpTarget = sourceEngine == "yt-dlp" || isSocialUrl || isStreamingMedia
+            val isYtDlpTarget = formatSpec != null || sourceEngine == "yt-dlp" || isSocialUrl || isStreamingMedia
 
-            // 1. For social video and HLS/DASH streaming media, route through stream-specific remuxer (yt-dlp)
+            // 1. For explicit format selectors, social videos, and HLS/DASH streams, route through yt-dlp
             if (isYtDlpTarget && GalleryDlEngine.isAvailable()) {
                 setProgress(workDataOf(KEY_PROGRESS to 0.2f, KEY_STATUS to "Downloading stream/video: $title..."))
+                val targetExtractionUrl = if (formatSpec != null && webpageUrl != null) webpageUrl else mediaUrl
                 downloadedFile = GalleryDlEngine.downloadMedia(
                     context = applicationContext,
-                    mediaUrl = mediaUrl,
+                    mediaUrl = targetExtractionUrl,
                     fileName = fileName,
                     referer = referer,
                     headers = downloadHeaders,
-                    cookies = cookieString
+                    cookies = cookieString,
+                    formatSpec = formatSpec,
+                    domainSubfolder = targetSubfolder,
+                    useExactFileName = useRenderedFileName
                 )
             }
 
@@ -148,6 +156,8 @@ class MediaDownloadWorker(
                     referer = referer,
                     downloadId = itemId,
                     headers = downloadHeaders,
+                    domainSubfolder = targetSubfolder,
+                    useRenderedFileName = useRenderedFileName,
                     onProgress = { bytesRead, totalBytes ->
                         val now = System.currentTimeMillis()
                         if (now - lastProgressUpdate > 300) {
@@ -188,11 +198,14 @@ class MediaDownloadWorker(
                         setProgress(workDataOf(KEY_PROGRESS to 0.4f, KEY_STATUS to "Attempting engine fallback for $title..."))
                         downloadedFile = GalleryDlEngine.downloadMedia(
                             context = applicationContext,
-                            mediaUrl = mediaUrl,
+                            mediaUrl = webpageUrl ?: mediaUrl,
                             fileName = fileName,
                             referer = referer,
                             headers = downloadHeaders,
-                            cookies = cookieString
+                            cookies = cookieString,
+                            formatSpec = formatSpec,
+                            domainSubfolder = targetSubfolder,
+                            useExactFileName = useRenderedFileName
                         )
                     }
                 }
@@ -304,6 +317,10 @@ class MediaDownloadWorker(
         const val KEY_SOURCE_URL = "source_url"
         const val KEY_SOURCE_ENGINE = "source_engine"
         const val KEY_HEADERS_JSON = "headers_json"
+        const val KEY_FORMAT_SPEC = "format_spec"
+        const val KEY_TARGET_SUBFOLDER = "target_subfolder"
+        const val KEY_USE_RENDERED_FILENAME = "use_rendered_filename"
+        const val KEY_WEBPAGE_URL = "webpage_url"
 
         const val KEY_PROGRESS = "progress"
         const val KEY_BYTES_READ = "bytes_read"

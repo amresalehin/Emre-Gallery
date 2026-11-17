@@ -20,7 +20,6 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -46,7 +45,7 @@ fun DownloaderEmptyResultsState(
             Icon(
                 imageVector = Icons.Default.SearchOff,
                 contentDescription = null,
-                tint = if (hasError) MaterialTheme.colorScheme.error else Color(0xFF6C757D),
+                tint = if (hasError) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.size(48.dp)
             )
             Text(
@@ -62,14 +61,17 @@ fun DownloaderEmptyResultsState(
                     "The webpage might be dynamically protected, require login, or filter settings are excluding items."
                 },
                 style = MaterialTheme.typography.bodySmall,
-                color = if (hasError) MaterialTheme.colorScheme.error else Color(0xFF6C757D),
+                color = if (hasError) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
                 textAlign = TextAlign.Center,
                 modifier = Modifier.testTag("downloader_empty_or_error_message")
             )
             Spacer(Modifier.height(4.dp))
             Button(
                 onClick = onOpenInLiveBrowser,
-                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF212529))
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = MaterialTheme.colorScheme.primary,
+                    contentColor = MaterialTheme.colorScheme.onPrimary
+                )
             ) {
                 Icon(Icons.Default.TravelExplore, contentDescription = null)
                 Spacer(Modifier.width(6.dp))

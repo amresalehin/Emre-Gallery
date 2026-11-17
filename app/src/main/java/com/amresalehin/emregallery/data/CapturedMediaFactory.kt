@@ -16,7 +16,8 @@ internal object CapturedMediaFactory {
         poster: String? = null,
         resolutionHint: String? = null,
         mimeHint: String? = null,
-        indexHint: Int = 0
+        indexHint: Int = 0,
+        durationSeconds: Long? = null
     ): ScrapedMediaItem? {
         val trimmed = rawUrl.trim()
         if (trimmed.startsWith("blob:", ignoreCase = true)) return null
@@ -46,12 +47,16 @@ internal object CapturedMediaFactory {
             return null
         }
 
+        val normalizedResHint = resolutionHint?.trim()?.takeUnless {
+            it.isBlank() || it in setOf("video", "audio", "poster", "background", "iframe", "json-ld", "json-ld-thumb", "json-ld-image")
+        }
+
         val thumb = resolvedInfo.thumbnailUrl
             ?: poster
             ?: if (classification.category == MediaCategory.IMAGES) resolved else poster
 
         val headers = buildDownloadHeaders(baseUrl)
-        val metadataMap = buildMetadataMap(baseUrl, resolutionHint, mimeHint)
+        val metadataMap = buildMetadataMap(baseUrl, normalizedResHint, mimeHint, durationSeconds)
 
         return ScrapedMediaItem(
             id = "captured_${indexHint}_${System.currentTimeMillis()}_${cleanedUrl.hashCode()}",
@@ -65,14 +70,15 @@ internal object CapturedMediaFactory {
             thumbnailUrl = thumb,
             source = source.label,
             mimeType = classification.mimeType,
-            resolutionHint = resolutionHint,
+            resolutionHint = normalizedResHint,
             provenance = MediaProvenance(
                 extractorEngine = "MediaCaptureEngine (${source.label})",
                 pageUrl = baseUrl,
                 domSelector = if (source == ExtractionSource.NETWORK_INTERCEPT) "network_request" else null
             ),
             metadata = metadataMap,
-            downloadHeaders = headers
+            downloadHeaders = headers,
+            durationSeconds = durationSeconds?.takeIf { it > 0L }
         )
     }
 
@@ -104,13 +110,17 @@ internal object CapturedMediaFactory {
                     }
                     val poster = obj.optString("p", "").ifBlank { null }
                     val res = obj.optString("r", "").ifBlank { null }
+                    val duration = if (obj.has("d") && !obj.isNull("d")) {
+                        obj.optLong("d", -1L).takeIf { it > 0L }
+                    } else null
                     val item = buildMediaItem(
                         rawUrl = rawUrl,
                         source = source,
                         baseUrl = baseUrl,
                         poster = poster,
                         resolutionHint = res,
-                        indexHint = i
+                        indexHint = i,
+                        durationSeconds = duration
                     )
                     if (item != null) {
                         results.add(item)
@@ -137,11 +147,13 @@ internal object CapturedMediaFactory {
     private fun buildMetadataMap(
         baseUrl: String,
         resolutionHint: String?,
-        mimeHint: String?
+        mimeHint: String?,
+        durationSeconds: Long? = null
     ): Map<String, String> {
         val metadataMap = mutableMapOf<String, String>()
         resolutionHint?.let { metadataMap["resolution"] = it }
         mimeHint?.let { metadataMap["mime_hint"] = it }
+        durationSeconds?.takeIf { it > 0L }?.let { metadataMap["duration"] = it.toString() }
         metadataMap["source_url"] = baseUrl
         return metadataMap
     }

@@ -11,31 +11,75 @@ from engine_runtime import (
 )
 
 
+def _format_duration_string(seconds_val):
+    if seconds_val is None:
+        return None
+    try:
+        total = int(float(seconds_val))
+    except (TypeError, ValueError):
+        return None
+    if total <= 0:
+        return None
+    hours, rem = divmod(total, 3600)
+    minutes, secs = divmod(rem, 60)
+    if hours > 0:
+        return f"{hours}:{minutes:02d}:{secs:02d}"
+    return f"{minutes:02d}:{secs:02d}"
+
+
+def _build_compact_format(f):
+    ext_val = (f.get("ext") or "").lower() or "mp4"
+    vcodec = f.get("vcodec")
+    acodec = f.get("acodec")
+    has_video = vcodec not in (None, "none")
+    has_audio = acodec not in (None, "none")
+    is_audio_only = (not has_video) and (
+        has_audio or ext_val in ("mp3", "m4a", "opus", "aac", "ogg", "flac", "wav")
+    )
+    return {
+        "format_id": str(f.get("format_id") or ""),
+        "ext": ext_val,
+        "width": f.get("width"),
+        "height": f.get("height"),
+        "fps": f.get("fps"),
+        "vcodec": vcodec,
+        "acodec": acodec,
+        "tbr": f.get("tbr"),
+        "abr": f.get("abr"),
+        "filesize": f.get("filesize") or f.get("filesize_approx"),
+        "format_note": f.get("format_note"),
+        "protocol": f.get("protocol"),
+        "has_video": has_video,
+        "has_audio": has_audio,
+        "is_audio_only": is_audio_only,
+        "url": f.get("url"),
+    }
+
+
 def _select_best_direct_format(entry):
     """
-    Resolves the best direct playable media URL and its format metadata from a yt-dlp entry.
-    Prefers direct pre-muxed video+audio streams, then best direct format URL, then entry.url.
+    Resolves the best direct playable media URL and preserves diverse quality,
+    codec, and audio-only formats for user selection.
     """
     formats = entry.get("formats") or []
     requested = entry.get("requested_formats") or []
 
-    # 1. If entry itself has a direct media URL (e.g. single-format extractor)
     entry_url = entry.get("url")
     entry_ext = entry.get("ext") or ""
 
-    # Filter formats that carry a concrete HTTP(S) media URL
     http_formats = [
         f for f in formats
-        if isinstance(f, dict) and isinstance(f.get("url"), str) and f["url"].startswith(("http://", "https://"))
+        if isinstance(f, dict)
+        and isinstance(f.get("url"), str)
+        and f["url"].startswith(("http://", "https://"))
+        and (f.get("ext") or "").lower() != "mhtml"
     ]
 
     chosen_fmt = None
-    # Prefer pre-muxed video+audio (not mhtml storyboard)
     muxed = [
         f for f in http_formats
         if f.get("vcodec") not in (None, "none")
         and f.get("acodec") not in (None, "none")
-        and (f.get("ext") or "").lower() != "mhtml"
     ]
     if muxed:
         chosen_fmt = max(
@@ -48,13 +92,10 @@ def _select_best_direct_format(entry):
             ),
         )
     elif entry_url and entry_url.startswith(("http://", "https://")) and entry_ext.lower() != "mhtml":
-        # Check if requested_formats exists (e.g. separate video/audio, keep entry metadata)
         chosen_fmt = entry
     elif http_formats:
-        non_storyboard = [f for f in http_formats if (f.get("ext") or "").lower() != "mhtml"]
-        candidates = non_storyboard or http_formats
         chosen_fmt = max(
-            candidates,
+            http_formats,
             key=lambda f: (
                 1 if f.get("vcodec") not in (None, "none") else 0,
                 int(f.get("height") or 0),
@@ -70,25 +111,39 @@ def _select_best_direct_format(entry):
     elif entry_url and isinstance(entry_url, str) and entry_url.startswith(("http://", "https://")):
         direct_url = entry_url
 
-    # Summarize available formats for downstream format selection / diagnostics
-    compact_formats = []
-    for f in http_formats:
-        ext_val = (f.get("ext") or "").lower()
-        if ext_val == "mhtml":
-            continue
-        compact_formats.append({
-            "format_id": str(f.get("format_id") or ""),
-            "ext": ext_val or "mp4",
-            "width": f.get("width"),
-            "height": f.get("height"),
-            "vcodec": f.get("vcodec"),
-            "acodec": f.get("acodec"),
-            "filesize": f.get("filesize") or f.get("filesize_approx"),
-            "tbr": f.get("tbr"),
-            "protocol": f.get("protocol"),
-            "url": f.get("url"),
-        })
+    # Preserve muxed video+audio, separate high-res video, and audio-only tracks without truncation dropping audio
+    muxed_compact = []
+    video_only_compact = []
+    audio_only_compact = []
+    seen_format_ids = set()
 
+    for f in http_formats:
+        compact = _build_compact_format(f)
+        fid = compact["format_id"] or compact["url"]
+        if fid in seen_format_ids:
+            continue
+        seen_format_ids.add(fid)
+        if compact["is_audio_only"]:
+            audio_only_compact.append(compact)
+        elif compact["has_video"] and compact["has_audio"]:
+            muxed_compact.append(compact)
+        elif compact["has_video"]:
+            video_only_compact.append(compact)
+
+    muxed_compact.sort(
+        key=lambda c: (int(c.get("height") or 0), float(c.get("tbr") or 0)),
+        reverse=True,
+    )
+    video_only_compact.sort(
+        key=lambda c: (int(c.get("height") or 0), float(c.get("tbr") or 0)),
+        reverse=True,
+    )
+    audio_only_compact.sort(
+        key=lambda c: (float(c.get("abr") or c.get("tbr") or 0), int(c.get("filesize") or 0)),
+        reverse=True,
+    )
+
+    compact_formats = muxed_compact[:12] + video_only_compact[:12] + audio_only_compact[:6]
     return direct_url, chosen_fmt or {}, compact_formats
 
 
@@ -109,6 +164,22 @@ def _build_ytdlp_item(entry, clean_url, direct_url, chosen_fmt, compact_formats,
         or entry.get("filesize")
         or entry.get("filesize_approx")
     )
+
+    raw_duration = entry.get("duration") or chosen_fmt.get("duration")
+    try:
+        duration_sec = int(float(raw_duration)) if raw_duration and float(raw_duration) > 0 else None
+    except (TypeError, ValueError):
+        duration_sec = None
+
+    uploader = (
+        entry.get("uploader")
+        or entry.get("channel")
+        or entry.get("creator")
+        or entry.get("artist")
+        or entry.get("uploader_id")
+    )
+    upload_date = entry.get("upload_date") or entry.get("release_date")
+    media_id = entry.get("id") or entry.get("display_id")
 
     vcodec = chosen_fmt.get("vcodec") if chosen_fmt else entry.get("vcodec")
     is_audio_only = vcodec == "none" or v_ext in ["mp3", "m4a", "opus", "aac", "ogg", "flac", "wav"]
@@ -149,9 +220,14 @@ def _build_ytdlp_item(entry, clean_url, direct_url, chosen_fmt, compact_formats,
         "thumbnailUrl": thumb,
         "resolutionHint": resolution_hint,
         "sizeBytes": filesize,
+        "durationSeconds": duration_sec,
+        "durationText": _format_duration_string(duration_sec),
+        "uploader": str(uploader).strip() if uploader else None,
+        "uploadDate": str(upload_date).strip() if upload_date else None,
+        "mediaId": str(media_id).strip() if media_id else None,
         "source": "yt-dlp",
         "httpHeaders": http_headers,
-        "formats": compact_formats[:20],
+        "formats": compact_formats[:30],
     }
     return item, v_title
 
@@ -160,7 +236,7 @@ def extract_yt_dlp(url, options_json="{}"):
     """
     Extracts media items using yt-dlp exclusively.
     Propagates session cookies, preserves available formats, and emits direct media URLs
-    alongside webpage_url metadata.
+    alongside webpage_url, duration, uploader, upload_date, and id metadata.
     """
     clean_url = url.strip() if url else ""
     if not clean_url or not YTDLP_AVAILABLE:

@@ -12,8 +12,10 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalContext
 import com.amresalehin.emregallery.data.DownloadQueueManager
+import com.amresalehin.emregallery.data.DownloaderSession
 import com.amresalehin.emregallery.data.MediaCategory
 import com.amresalehin.emregallery.data.MediaDeduplicator
+import com.amresalehin.emregallery.data.MediaFormatOption
 import com.amresalehin.emregallery.data.MediaQualityEvaluator
 import com.amresalehin.emregallery.data.ScrapedMediaItem
 import kotlinx.coroutines.CoroutineScope
@@ -25,7 +27,8 @@ internal val BROWSER_MEDIA_FILTER_OPTIONS = listOf("Images", "Videos", "Audio", 
 
 /**
  * Coordinates browser navigation state, media discovery deduplication/quality upgrades,
- * category filtering, multi-selection, and batch download enqueueing for [FullScreenBrowserView].
+ * clearing stale discoveries on new page navigation, category filtering, per-item format selection,
+ * multi-selection, and batch download enqueueing for [FullScreenBrowserView].
  */
 @Stable
 internal class FullScreenBrowserController(
@@ -35,12 +38,17 @@ internal class FullScreenBrowserController(
     private val onDownloadComplete: (Int) -> Unit
 ) {
     var currentUrl by mutableStateOf(initialUrl)
+    private var activePageKey by mutableStateOf(normalizePageNavigationKey(initialUrl))
     var pageTitle by mutableStateOf("")
     var discoveredItems by mutableStateOf<List<ScrapedMediaItem>>(emptyList())
     var showDiscoveredMediaSheet by mutableStateOf(false)
 
     var selectedItemIds by mutableStateOf<Set<String>>(emptySet())
     var selectedFilter by mutableStateOf<String?>(null)
+    var selectedFormats by mutableStateOf<Map<String, MediaFormatOption>>(emptyMap())
+    var formatPickerItem by mutableStateOf<ScrapedMediaItem?>(null)
+    var showDownloadSettingsDialog by mutableStateOf(false)
+
     var isDownloading by mutableStateOf(false)
     var downloadProgress by mutableFloatStateOf(0f)
 
@@ -52,6 +60,37 @@ internal class FullScreenBrowserController(
             "Streams" -> discoveredItems.filter { it.category == MediaCategory.STREAMS }
             else -> discoveredItems
         }
+
+    fun onNavigatedUrl(newUrl: String) {
+        val trimmed = newUrl.trim()
+        if (trimmed.isBlank() || trimmed.equals("about:blank", ignoreCase = true)) {
+            if (currentUrl.isNotBlank() || discoveredItems.isNotEmpty()) {
+                clearDiscoveredState("")
+                DownloaderSession.resetDiscoveredForNavigation("")
+            }
+            currentUrl = ""
+            activePageKey = ""
+            return
+        }
+
+        val nextKey = normalizePageNavigationKey(trimmed)
+        if (activePageKey.isNotBlank() && nextKey != activePageKey) {
+            clearDiscoveredState(trimmed)
+            DownloaderSession.resetDiscoveredForNavigation(trimmed)
+        }
+        currentUrl = trimmed
+        activePageKey = nextKey
+    }
+
+    private fun clearDiscoveredState(nextUrl: String) {
+        discoveredItems = emptyList()
+        selectedItemIds = emptySet()
+        selectedFilter = null
+        selectedFormats = emptyMap()
+        formatPickerItem = null
+        pageTitle = ""
+        currentUrl = nextUrl
+    }
 
     fun onMediaExtracted(item: ScrapedMediaItem) {
         val key = MediaDeduplicator.canonicalKey(item.url)
@@ -106,6 +145,14 @@ internal class FullScreenBrowserController(
         }
     }
 
+    fun setFormatForItem(itemId: String, option: MediaFormatOption?) {
+        selectedFormats = if (option == null) {
+            selectedFormats - itemId
+        } else {
+            selectedFormats + (itemId to option)
+        }
+    }
+
     fun downloadSelected() {
         if (selectedItemIds.isEmpty() || isDownloading) return
         isDownloading = true
@@ -123,7 +170,8 @@ internal class FullScreenBrowserController(
                 stackId = stackId,
                 stackTitle = stackTitle,
                 sourceDomain = domain,
-                sourceUrl = currentUrl
+                sourceUrl = currentUrl,
+                selectedFormats = selectedFormats
             )
 
             downloadProgress = 1.0f
@@ -131,6 +179,22 @@ internal class FullScreenBrowserController(
             isDownloading = false
             showDiscoveredMediaSheet = false
             onDownloadComplete(toDownload.size)
+        }
+    }
+
+    companion object {
+        internal fun normalizePageNavigationKey(url: String): String {
+            val trimmed = url.trim()
+            if (trimmed.isBlank() || trimmed.equals("about:blank", ignoreCase = true)) return ""
+            return runCatching {
+                val parsed = URL(trimmed)
+                val host = parsed.host.lowercase().removePrefix("www.")
+                val path = (parsed.path ?: "").trimEnd('/')
+                val query = parsed.query?.let { "?$it" } ?: ""
+                "$host$path$query"
+            }.getOrElse {
+                trimmed.substringBefore('#').trimEnd('/').lowercase()
+            }
         }
     }
 }
